@@ -1,0 +1,265 @@
+import { readFile } from "node:fs/promises";
+import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { ImageContent } from "@mariozechner/pi-ai";
+import { EventForwarder } from "../agent/event-forwarder.js";
+import type { SessionFactory } from "../agent/session-factory.js";
+import type { DedupStore } from "./dedup-store.js";
+import { RouteResolver } from "./routing.js";
+import { RuntimeRegistry } from "./runtime-registry.js";
+import type {
+  ConnectorPlugin,
+  GatewayConfig,
+  GatewayLogger,
+  InboundAttachment,
+  InboundEnvelope,
+  PromptPayload,
+  RouteResolution,
+} from "./types.js";
+
+interface GatewayOptions {
+  config: GatewayConfig;
+  connectors: ConnectorPlugin[];
+  routeResolver: RouteResolver;
+  dedupStore: DedupStore;
+  runtimeRegistry: RuntimeRegistry;
+  sessionFactory: SessionFactory;
+  logger: GatewayLogger;
+}
+
+interface StopControlEvent {
+  type: "stop";
+  platform: "discord";
+  accountId: string;
+  chatId: string;
+  threadId?: string;
+}
+
+function isImageAttachment(attachment: InboundAttachment): boolean {
+  return Boolean(attachment.mimeType?.startsWith("image/") && attachment.localPath);
+}
+
+function dedupKey(message: InboundEnvelope): string {
+  return `${message.platform}:${message.accountId}:${message.chatId}:${message.messageId}`;
+}
+
+function conversationKey(message: InboundEnvelope): string {
+  return `${message.platform}:${message.accountId}:${message.chatId}:${message.threadId ?? "root"}`;
+}
+
+export class Gateway {
+  private readonly connectorsByPlatform = new Map<string, ConnectorPlugin>();
+  private started = false;
+
+  constructor(private readonly options: GatewayOptions) {
+    for (const connector of options.connectors) {
+      this.connectorsByPlatform.set(connector.platform, connector);
+    }
+  }
+
+  async start(): Promise<void> {
+    if (this.started) return;
+
+    await this.options.dedupStore.load();
+    this.options.dedupStore.startAutoFlush();
+
+    for (const connector of this.options.connectors) {
+      await connector.start({
+        emitInbound: async (message) => this.handleInbound(message),
+        emitControl: async (event) => this.handleControl(event),
+      });
+    }
+
+    this.started = true;
+  }
+
+  async stop(): Promise<void> {
+    if (!this.started) return;
+
+    for (const connector of this.options.connectors) {
+      await connector.stop();
+    }
+
+    this.options.dedupStore.stopAutoFlush();
+    await this.options.dedupStore.flush();
+    await this.options.runtimeRegistry.closeAll();
+
+    this.started = false;
+  }
+
+  private outboundBaseFromInbound(message: InboundEnvelope): {
+    platform: "discord";
+    accountId: string;
+    chatId: string;
+    threadId?: string;
+  } {
+    return {
+      platform: message.platform,
+      accountId: message.accountId,
+      chatId: message.chatId,
+      ...(message.threadId ? { threadId: message.threadId } : {}),
+    };
+  }
+
+  private outboundBaseFromControl(event: StopControlEvent): {
+    platform: "discord";
+    accountId: string;
+    chatId: string;
+    threadId?: string;
+  } {
+    return {
+      platform: event.platform,
+      accountId: event.accountId,
+      chatId: event.chatId,
+      ...(event.threadId ? { threadId: event.threadId } : {}),
+    };
+  }
+
+  private async handleInbound(message: InboundEnvelope): Promise<void> {
+    const connector = this.connectorsByPlatform.get(message.platform);
+    if (!connector) {
+      this.options.logger.warn({ platform: message.platform }, "No connector found for inbound message");
+      return;
+    }
+
+    const key = dedupKey(message);
+    if (this.options.dedupStore.has(key)) {
+      this.options.logger.debug({ dedupKey: key }, "Skipping duplicate message");
+      return;
+    }
+
+    this.options.dedupStore.add(key);
+
+    const route = this.options.routeResolver.resolve(message.routeChannelId);
+    if (!route) {
+      await connector.send({
+        ...this.outboundBaseFromInbound(message),
+        mode: "create",
+        replyToMessageId: message.messageId,
+        text: "No route configured for this channel.",
+      });
+      return;
+    }
+
+    if (route.profile.allowMentionsOnly && !message.isDirectMessage && !message.mentionedBot) {
+      this.options.logger.debug({ channelId: message.routeChannelId, routeId: route.routeId }, "Ignoring non-mention message");
+      return;
+    }
+
+    const convKey = conversationKey(message);
+
+    await this.options.runtimeRegistry.getOrCreate(convKey, async () =>
+      this.options.sessionFactory.createRuntime(convKey, route, message),
+    );
+
+    await this.options.runtimeRegistry.enqueue(convKey, async (runtime) => {
+      await this.processMessage(connector, runtime.session, route, message);
+    });
+  }
+
+  private async processMessage(
+    connector: ConnectorPlugin,
+    session: AgentSession,
+    route: RouteResolution,
+    message: InboundEnvelope,
+  ): Promise<void> {
+    this.options.logger.info(
+      {
+        routeId: route.routeId,
+        channelId: message.routeChannelId,
+        chatId: message.chatId,
+        threadId: message.threadId,
+        messageId: message.messageId,
+      },
+      "Processing inbound message",
+    );
+
+    const initial = await connector.send({
+      ...this.outboundBaseFromInbound(message),
+      mode: "create",
+      replyToMessageId: message.messageId,
+      text: "_Thinking..._",
+    });
+
+    const rootMessageId = initial.messageId ?? message.messageId;
+
+    const forwarder = new EventForwarder(connector, message, rootMessageId, this.options.logger);
+    const unsubscribe = session.subscribe(forwarder.handleEvent);
+
+    try {
+      const payload = await this.buildPromptPayload(message);
+      await session.prompt(payload.text, payload.images.length > 0 ? { images: payload.images } : undefined);
+      await forwarder.finalize();
+      this.options.logger.info({ routeId: route.routeId, messageId: message.messageId }, "Inbound message processed");
+    } catch (error) {
+      this.options.logger.error({ err: error, routeId: route.routeId }, "Failed to process inbound message");
+      await connector.send({
+        ...this.outboundBaseFromInbound(message),
+        mode: "update",
+        targetMessageId: rootMessageId,
+        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    } finally {
+      unsubscribe();
+    }
+  }
+
+  private async buildPromptPayload(message: InboundEnvelope): Promise<PromptPayload> {
+    const textParts: string[] = [];
+    const baseText = message.text.trim();
+    textParts.push(baseText.length > 0 ? baseText : "(empty message)");
+
+    const images: ImageContent[] = [];
+    const otherAttachments: string[] = [];
+
+    for (const attachment of message.attachments) {
+      if (isImageAttachment(attachment) && attachment.localPath && attachment.mimeType) {
+        try {
+          const buffer = await readFile(attachment.localPath);
+          images.push({
+            type: "image",
+            mimeType: attachment.mimeType,
+            data: buffer.toString("base64"),
+          });
+          continue;
+        } catch (error) {
+          this.options.logger.warn({ err: error, attachment: attachment.localPath }, "Failed to read image attachment");
+        }
+      }
+
+      if (attachment.localPath) {
+        otherAttachments.push(attachment.localPath);
+      } else if (attachment.remoteUrl) {
+        otherAttachments.push(attachment.remoteUrl);
+      }
+    }
+
+    if (otherAttachments.length > 0) {
+      textParts.push(`<attachments>\n${otherAttachments.join("\n")}\n</attachments>`);
+    }
+
+    return {
+      text: textParts.join("\n\n"),
+      images,
+    };
+  }
+
+  private async handleControl(event: StopControlEvent): Promise<void> {
+    const convKey = `${event.platform}:${event.accountId}:${event.chatId}:${event.threadId ?? "root"}`;
+    const connector = this.connectorsByPlatform.get(event.platform);
+
+    const aborted = await this.options.runtimeRegistry.abort(convKey);
+    this.options.logger.info({ conversationKey: convKey, aborted }, "Stop requested");
+
+    if (!connector) return;
+
+    try {
+      await connector.send({
+        ...this.outboundBaseFromControl(event),
+        mode: "create",
+        text: aborted ? "_Stopped current run._" : "_No active run to stop._",
+      });
+    } catch (error) {
+      this.options.logger.warn({ err: error, conversationKey: convKey }, "Failed to send stop acknowledgement");
+    }
+  }
+}

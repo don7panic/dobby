@@ -1,0 +1,49 @@
+{
+  "discord": {
+    "enabled": true,
+    "botTokenEnv": "DISCORD_BOT_TOKEN",
+    "allowDirectMessages": true,
+    "allowedGuildIds": []
+  },
+  "routing": {
+    "defaultRouteId": "projectA",
+    "channelMap": {
+      "YOUR_DISCORD_CHANNEL_ID_A": "projectA",
+      "YOUR_DISCORD_CHANNEL_ID_B": "projectB"
+    },
+    "routes": {
+      "projectA": {
+        "projectRoot": "/Users/you/workspace/project-a",
+        "tools": "full",
+        "systemPromptFile": "",
+        "allowMentionsOnly": true,
+        "maxConcurrentTurns": 1
+      },
+      "projectB": {
+        "projectRoot": "/Users/you/workspace/project-b",
+        "tools": "full",
+        "systemPromptFile": "",
+        "allowMentionsOnly": true,
+        "maxConcurrentTurns": 1
+      }
+    }
+  },
+  "agent": {
+    "provider": "custom-openai",
+    "model": "example-model",
+    "thinkingLevel": "off",
+    "modelsFile": "./models.custom.json"
+  },
+  "sandbox": {
+    "backend": "host",
+    "docker": {
+      "container": "im-agent-sandbox",
+      "hostWorkspaceRoot": "/Users/you/workspace",
+      "containerWorkspaceRoot": "/workspace"
+    }
+  },
+  "data": {
+    "rootDir": "./data",
+    "dedupTtlMs": 604800000
+  }
+}

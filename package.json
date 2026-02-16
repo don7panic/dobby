@@ -1,0 +1,31 @@
+{
+  "name": "im-agent-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Discord-first local agent gateway built on pi packages",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "dev:local": "node --env-file-if-exists=.env --import tsx --watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "start:local": "node --env-file-if-exists=.env dist/main.js",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.52.12",
+    "@mariozechner/pi-agent-core": "^0.52.12",
+    "@mariozechner/pi-coding-agent": "^0.52.12",
+    "discord.js": "^14.22.1",
+    "pino": "^9.5.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2"
+  }
+}
