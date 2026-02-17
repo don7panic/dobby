@@ -7,7 +7,7 @@ import { DedupStore } from "./core/dedup-store.js";
 import { Gateway } from "./core/gateway.js";
 import { loadGatewayConfig, RouteResolver } from "./core/routing.js";
 import { RuntimeRegistry } from "./core/runtime-registry.js";
-import type { ConnectorPlugin } from "./core/types.js";
+import type { ConnectorPlugin, SandboxConfig } from "./core/types.js";
 import { createExecutor } from "./sandbox/executor.js";
 
 function parseConfigPath(argv: string[]): string {
@@ -29,6 +29,35 @@ async function ensureDataDirs(rootDir: string): Promise<void> {
   await mkdir(join(rootDir, "state"), { recursive: true });
 }
 
+function summarizeSandboxConfig(config: SandboxConfig): Record<string, unknown> {
+  if (config.backend === "host") {
+    return {
+      backend: "host",
+    };
+  }
+
+  if (config.backend === "docker") {
+    return {
+      backend: "docker",
+      container: config.docker.container,
+      hostWorkspaceRoot: config.docker.hostWorkspaceRoot,
+      containerWorkspaceRoot: config.docker.containerWorkspaceRoot,
+    };
+  }
+
+  return {
+    backend: "boxlite",
+    workspaceRoot: config.boxlite.workspaceRoot,
+    image: config.boxlite.image,
+    containerWorkspaceRoot: config.boxlite.containerWorkspaceRoot,
+    reuseMode: config.boxlite.reuseMode,
+    autoRemove: config.boxlite.autoRemove,
+    securityProfile: config.boxlite.securityProfile,
+    ...(config.boxlite.cpus !== undefined ? { cpus: config.boxlite.cpus } : {}),
+    ...(config.boxlite.memoryMib !== undefined ? { memoryMib: config.boxlite.memoryMib } : {}),
+  };
+}
+
 async function main(): Promise<void> {
   const configPath = parseConfigPath(process.argv.slice(2));
   const config = await loadGatewayConfig(configPath);
@@ -41,6 +70,13 @@ async function main(): Promise<void> {
   });
 
   const executor = await createExecutor(config.sandbox, logger);
+  logger.info(
+    {
+      sandbox: summarizeSandboxConfig(config.sandbox),
+      executorType: executor.constructor?.name ?? "unknown",
+    },
+    "Sandbox backend configured",
+  );
   const dedupStore = new DedupStore(join(config.data.stateDir, "dedup.json"), config.data.dedupTtlMs, logger);
   const routeResolver = new RouteResolver(config.routing);
   const runtimeRegistry = new RuntimeRegistry(logger);

@@ -40,6 +40,14 @@
       "container": "im-agent-sandbox",
       "hostWorkspaceRoot": "/Users/you/workspace",
       "containerWorkspaceRoot": "/workspace"
+    },
+    "boxlite": {
+      "workspaceRoot": "/Users/you/workspace",
+      "image": "alpine:latest",
+      "containerWorkspaceRoot": "/workspace",
+      "reuseMode": "conversation",
+      "autoRemove": true,
+      "securityProfile": "maximum"
     }
   },
   "data": {

@@ -1,4 +1,5 @@
 import type { GatewayLogger, SandboxConfig } from "../core/types.js";
+import { BoxliteExecutor } from "./boxlite-executor.js";
 import { DockerExecutor } from "./docker-executor.js";
 import { HostExecutor } from "./host-executor.js";
 
@@ -29,5 +30,9 @@ export async function createExecutor(config: SandboxConfig, logger: GatewayLogge
     return DockerExecutor.create(config.docker, logger);
   }
 
-  throw new Error("Boxlite backend is not implemented in MVP. Configure sandbox.backend as 'docker' or 'host'.");
+  if (config.backend === "boxlite") {
+    return BoxliteExecutor.create(config.boxlite, logger);
+  }
+
+  throw new Error("Unsupported sandbox backend");
 }

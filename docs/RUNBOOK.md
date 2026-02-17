@@ -106,6 +106,48 @@ docker run -dit --name im-agent-sandbox \
 
 然后重启网关。
 
+## 6.5 切换到 BoxLite（可选）
+
+确认 `config/gateway.json`：
+
+1. `sandbox.backend = "boxlite"`
+2. `sandbox.boxlite.workspaceRoot` 覆盖所有 `routing.routes.*.projectRoot`
+3. `sandbox.boxlite.containerWorkspaceRoot` 与容器内工作目录一致（默认 `/workspace`）
+4. 可选字段：
+   - `image`（默认 `alpine:latest`）
+   - `cpus` / `memoryMib`
+   - `reuseMode`（`conversation` 或 `workspace`，默认 `conversation`）
+   - `autoRemove`（默认 `true`）
+   - `securityProfile`（`development`/`standard`/`maximum`，默认 `maximum`）
+
+示例（仅示意）：
+
+```json
+"sandbox": {
+  "backend": "boxlite",
+  "boxlite": {
+    "workspaceRoot": "/Users/you/workspace",
+    "image": "alpine:latest",
+    "containerWorkspaceRoot": "/workspace",
+    "reuseMode": "conversation",
+    "autoRemove": true,
+    "securityProfile": "maximum"
+  }
+}
+```
+
+如果启动报 `Failed to initialize BoxLite runtime` 或 `Cannot find native binding`：
+
+```bash
+npm install @boxlite-ai/boxlite --registry=https://registry.npmjs.org
+```
+
+必要时补装平台包（例如 macOS ARM64）：
+
+```bash
+npm install @boxlite-ai/boxlite-darwin-arm64 --registry=https://registry.npmjs.org
+```
+
 ## 7. 最小验收
 
 启动成功后，日志应出现：

@@ -16,8 +16,9 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.52.12",
+    "@boxlite-ai/boxlite": "^0.2.11",
     "@mariozechner/pi-agent-core": "^0.52.12",
+    "@mariozechner/pi-ai": "^0.52.12",
     "@mariozechner/pi-coding-agent": "^0.52.12",
     "discord.js": "^14.22.1",
     "pino": "^9.5.0",

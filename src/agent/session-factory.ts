@@ -2,6 +2,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import {
   AuthStorage,
+  type CreateAgentSessionOptions,
+  type ToolDefinition,
   createAgentSession,
   createBashTool,
   createEditTool,
@@ -25,12 +27,20 @@ import type {
   InboundEnvelope,
   RouteResolution,
 } from "../core/types.js";
+import { BOXLITE_CONTEXT_CONVERSATION_KEY_ENV, BOXLITE_CONTEXT_PROJECT_ROOT_ENV } from "../sandbox/boxlite-context.js";
 import type { Executor } from "../sandbox/executor.js";
 
 interface SessionFactoryOptions {
   config: GatewayConfig;
   executor: Executor;
   logger: GatewayLogger;
+}
+
+type RuntimeTool = NonNullable<CreateAgentSessionOptions["tools"]>[number];
+
+interface BuiltTools {
+  activeTools: RuntimeTool[];
+  customTools: ToolDefinition[];
 }
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
@@ -86,7 +96,7 @@ export class SessionFactory {
     await mkdir(this.options.config.data.attachmentsDir, { recursive: true });
     await mkdir(sessionDir, { recursive: true });
 
-    const tools = this.buildTools(route.profile.projectRoot, route.profile.tools);
+    const builtTools = this.buildTools(conversationKey, route.profile.projectRoot, route.profile.tools);
 
     const sessionOptions = {
       cwd: route.profile.projectRoot,
@@ -95,11 +105,20 @@ export class SessionFactory {
       sessionManager: SessionManager.open(sessionFile, sessionDir),
       model: this.model,
       thinkingLevel: this.options.config.agent.thinkingLevel,
-      tools,
+      tools: builtTools.activeTools,
+      customTools: builtTools.customTools,
       ...(this.options.config.agent.agentDir ? { agentDir: this.options.config.agent.agentDir } : {}),
     };
 
     const { session } = await createAgentSession(sessionOptions);
+
+    this.options.logger.info(
+      {
+        activeTools: builtTools.activeTools.map((tool) => tool.name),
+        customTools: builtTools.customTools.map((tool) => tool.name),
+      },
+      "Registered sandbox custom tools",
+    );
 
     if (route.profile.systemPromptFile) {
       try {
@@ -125,7 +144,7 @@ export class SessionFactory {
     };
   }
 
-  private buildTools(projectRoot: string, profile: "full" | "readonly") {
+  private buildTools(conversationKey: string, projectRoot: string, profile: "full" | "readonly"): BuiltTools {
     const readOps: ReadOperations = {
       access: async (absolutePath) => {
         assertWithinRoot(absolutePath, projectRoot);
@@ -167,11 +186,32 @@ export class SessionFactory {
 
     const bashOps: BashOperations = {
       exec: async (command, cwd, options) => {
+        const includeBoxliteContext = this.options.config.sandbox.backend === "boxlite";
+        const env: NodeJS.ProcessEnv = {
+          ...(options.env ?? {}),
+          ...(includeBoxliteContext
+            ? {
+                [BOXLITE_CONTEXT_CONVERSATION_KEY_ENV]: conversationKey,
+                [BOXLITE_CONTEXT_PROJECT_ROOT_ENV]: projectRoot,
+              }
+            : {}),
+        };
+
         const execOptions = {
           ...(options.signal ? { signal: options.signal } : {}),
           ...(options.timeout !== undefined ? { timeoutSeconds: options.timeout } : {}),
-          ...(options.env ? { env: options.env } : {}),
+          ...(Object.keys(env).length > 0 ? { env } : {}),
         };
+
+        this.options.logger.info(
+          {
+            backend: this.options.config.sandbox.backend,
+            executorType: this.options.executor.constructor?.name ?? "unknown",
+            cwd,
+            timeoutSeconds: execOptions.timeoutSeconds,
+          },
+          "Dispatching bash command to sandbox executor",
+        );
 
         const result = await this.options.executor.exec(command, cwd, execOptions);
 
@@ -180,25 +220,53 @@ export class SessionFactory {
           options.onData(Buffer.from(combined, "utf-8"));
         }
 
+        this.options.logger.info(
+          {
+            backend: this.options.config.sandbox.backend,
+            executorType: this.options.executor.constructor?.name ?? "unknown",
+            code: result.code,
+            killed: result.killed,
+            stdoutBytes: Buffer.byteLength(result.stdout, "utf-8"),
+            stderrBytes: Buffer.byteLength(result.stderr, "utf-8"),
+          },
+          "Sandbox executor completed bash command",
+        );
+
         return { exitCode: result.killed ? null : result.code };
       },
     };
 
+    const readTool = createReadTool(projectRoot, { operations: readOps }) as RuntimeTool;
+    const bashTool = createBashTool(projectRoot, { operations: bashOps }) as RuntimeTool;
+    const editTool = createEditTool(projectRoot, { operations: editOps }) as RuntimeTool;
+    const writeTool = createWriteTool(projectRoot, { operations: writeOps }) as RuntimeTool;
+    const grepTool = createGrepTool(projectRoot) as RuntimeTool;
+    const findTool = createFindTool(projectRoot) as RuntimeTool;
+    const lsTool = createLsTool(projectRoot) as RuntimeTool;
+
     if (profile === "readonly") {
-      return [
-        createReadTool(projectRoot, { operations: readOps }),
-        createGrepTool(projectRoot),
-        createFindTool(projectRoot),
-        createLsTool(projectRoot),
-      ];
+      const activeTools = [readTool, grepTool, findTool, lsTool];
+      return {
+        activeTools,
+        customTools: activeTools.map((tool) => this.toCustomToolDefinition(tool)),
+      };
     }
 
-    return [
-      createReadTool(projectRoot, { operations: readOps }),
-      createBashTool(projectRoot, { operations: bashOps }),
-      createEditTool(projectRoot, { operations: editOps }),
-      createWriteTool(projectRoot, { operations: writeOps }),
-    ];
+    const activeTools = [readTool, bashTool, editTool, writeTool];
+    return {
+      activeTools,
+      customTools: activeTools.map((tool) => this.toCustomToolDefinition(tool)),
+    };
+  }
+
+  private toCustomToolDefinition(tool: RuntimeTool): ToolDefinition {
+    return {
+      name: tool.name,
+      label: tool.label,
+      description: tool.description,
+      parameters: tool.parameters,
+      execute: (toolCallId, params, signal, onUpdate) => tool.execute(toolCallId, params, signal, onUpdate),
+    };
   }
 
   private getSessionFilePath(inbound: InboundEnvelope): string {

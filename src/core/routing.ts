@@ -46,7 +46,16 @@ const gatewayConfigSchema = z.object({
     }),
     z.object({
       backend: z.literal("boxlite"),
-      boxlite: z.object({ workspaceRoot: z.string().min(1) }),
+      boxlite: z.object({
+        workspaceRoot: z.string().min(1),
+        image: z.string().min(1).default("alpine:latest"),
+        cpus: z.number().int().positive().optional(),
+        memoryMib: z.number().int().positive().optional(),
+        containerWorkspaceRoot: z.string().min(1).default("/workspace"),
+        reuseMode: z.enum(["conversation", "workspace"]).default("conversation"),
+        autoRemove: z.boolean().default(true),
+        securityProfile: z.enum(["development", "standard", "maximum"]).default("maximum"),
+      }),
     }),
   ]),
   data: z.object({
@@ -168,6 +177,13 @@ export async function loadGatewayConfig(configPath: string): Promise<GatewayConf
               backend: "boxlite",
               boxlite: {
                 workspaceRoot: resolveMaybeAbsolute(configDir, parsed.sandbox.boxlite.workspaceRoot),
+                image: parsed.sandbox.boxlite.image,
+                ...(parsed.sandbox.boxlite.cpus !== undefined ? { cpus: parsed.sandbox.boxlite.cpus } : {}),
+                ...(parsed.sandbox.boxlite.memoryMib !== undefined ? { memoryMib: parsed.sandbox.boxlite.memoryMib } : {}),
+                containerWorkspaceRoot: parsed.sandbox.boxlite.containerWorkspaceRoot,
+                reuseMode: parsed.sandbox.boxlite.reuseMode,
+                autoRemove: parsed.sandbox.boxlite.autoRemove,
+                securityProfile: parsed.sandbox.boxlite.securityProfile,
               },
             }
           : { backend: "host" },

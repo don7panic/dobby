@@ -120,6 +120,13 @@ export type SandboxConfig =
       backend: "boxlite";
       boxlite: {
         workspaceRoot: string;
+        image: string;
+        cpus?: number;
+        memoryMib?: number;
+        containerWorkspaceRoot: string;
+        reuseMode: "conversation" | "workspace";
+        autoRemove: boolean;
+        securityProfile: "development" | "standard" | "maximum";
       };
     };
 
