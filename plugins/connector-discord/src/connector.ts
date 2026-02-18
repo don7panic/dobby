@@ -16,6 +16,8 @@ import type {
 } from "@im-agent-gateway/plugin-sdk";
 import { mapDiscordMessage } from "./mapper.js";
 
+const DISCORD_MAX_CONTENT_LENGTH = 2000;
+
 export interface DiscordConnectorConfig {
   botTokenEnv: string;
   allowDirectMessages: boolean;
@@ -58,6 +60,20 @@ function hasMessagingApi(channel: unknown): channel is DiscordTextChannel {
   );
 }
 
+function clampDiscordContent(text: string): string {
+  if (text.length <= DISCORD_MAX_CONTENT_LENGTH) {
+    return text;
+  }
+
+  const suffix = "\n...(truncated)";
+  const budget = DISCORD_MAX_CONTENT_LENGTH - suffix.length;
+  if (budget <= 0) {
+    return text.slice(0, DISCORD_MAX_CONTENT_LENGTH);
+  }
+
+  return `${text.slice(0, budget)}${suffix}`;
+}
+
 export class DiscordConnector implements ConnectorPlugin {
   readonly id: string;
   readonly platform = "discord" as const;
@@ -67,6 +83,7 @@ export class DiscordConnector implements ConnectorPlugin {
     supportsThread: true,
     supportsTyping: true,
     supportsFileUpload: true,
+    maxTextLength: DISCORD_MAX_CONTENT_LENGTH,
   };
 
   private client: Client | null = null;
@@ -146,6 +163,18 @@ export class DiscordConnector implements ConnectorPlugin {
     }
 
     const channel = await this.fetchTextChannel(message.chatId);
+    const content = clampDiscordContent(message.text);
+    if (content !== message.text) {
+      this.logger.warn(
+        {
+          originalLength: message.text.length,
+          truncatedLength: content.length,
+          mode: message.mode,
+          chatId: message.chatId,
+        },
+        "Outbound Discord message exceeded 2000 characters and was truncated",
+      );
+    }
 
     if (message.mode === "update") {
       if (!message.targetMessageId) {
@@ -153,12 +182,12 @@ export class DiscordConnector implements ConnectorPlugin {
       }
 
       const existing = await channel.messages.fetch(message.targetMessageId);
-      const edited = await existing.edit({ content: message.text });
+      const edited = await existing.edit({ content });
       return { messageId: edited.id };
     }
 
     const options: MessageCreateOptions = {
-      content: message.text,
+      content,
     };
 
     if (message.replyToMessageId) {

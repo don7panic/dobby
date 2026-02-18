@@ -5,9 +5,44 @@ interface ForwarderOptions {
   toolMessageMode?: "none" | "errors" | "all";
 }
 
-function truncate(text: string, max = 2000): string {
+function truncate(text: string, max?: number): string {
+  if (max === undefined) return text;
+  if (max <= 0) return "";
   if (text.length <= max) return text;
-  return `${text.slice(0, max - 20)}\n...(truncated)`;
+  const suffix = "\n...(truncated)";
+  if (max <= suffix.length) {
+    return text.slice(0, max);
+  }
+  return `${text.slice(0, max - suffix.length)}${suffix}`;
+}
+
+function splitForMaxLength(text: string, max?: number): string[] {
+  if (max === undefined) {
+    return [text];
+  }
+  if (text.length <= max) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > max) {
+    let splitAt = remaining.lastIndexOf("\n", max);
+    if (splitAt < Math.floor(max * 0.6)) {
+      splitAt = max;
+    }
+
+    const chunk = remaining.slice(0, splitAt).trimEnd();
+    chunks.push(chunk.length > 0 ? chunk : remaining.slice(0, max));
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+
+  if (remaining.length > 0) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
 }
 
 export class EventForwarder {
@@ -16,6 +51,7 @@ export class EventForwarder {
   private readonly pendingOps: Array<Promise<unknown>> = [];
   private readonly updateIntervalMs: number;
   private readonly toolMessageMode: "none" | "errors" | "all";
+  private readonly maxTextLength: number | undefined;
 
   constructor(
     private readonly connector: ConnectorPlugin,
@@ -26,6 +62,10 @@ export class EventForwarder {
   ) {
     this.updateIntervalMs = options.updateIntervalMs ?? 400;
     this.toolMessageMode = options.toolMessageMode ?? "none";
+    const capabilityMaxTextLength = this.connector.capabilities.maxTextLength;
+    this.maxTextLength = typeof capabilityMaxTextLength === "number" && capabilityMaxTextLength > 0
+      ? capabilityMaxTextLength
+      : undefined;
   }
 
   handleEvent = (event: GatewayAgentEvent): void => {
@@ -69,7 +109,12 @@ export class EventForwarder {
       );
       if (this.toolMessageMode === "all" || (this.toolMessageMode === "errors" && event.isError)) {
         const prefix = event.isError ? "ERR" : "OK";
-        this.enqueueSend(`*${prefix} ${event.toolName}*\n\`\`\`\n${truncate(summary)}\n\`\`\``);
+        const header = `*${prefix} ${event.toolName}*\n\`\`\`\n`;
+        const footer = "\n```";
+        const availableSummaryLength = this.maxTextLength === undefined
+          ? undefined
+          : Math.max(0, this.maxTextLength - header.length - footer.length);
+        this.enqueueSend(`${header}${truncate(summary, availableSummaryLength)}${footer}`);
       }
       return;
     }
@@ -81,7 +126,6 @@ export class EventForwarder {
 
   async finalize(): Promise<void> {
     await this.flushNow();
-    await Promise.allSettled(this.pendingOps);
 
     if (this.responseText.trim().length === 0) {
       await this.connector.send({
@@ -90,7 +134,34 @@ export class EventForwarder {
         targetMessageId: this.rootMessageId,
         text: "(completed with no text response)",
       });
+      await Promise.allSettled(this.pendingOps);
+      return;
     }
+
+    const chunks = splitForMaxLength(this.responseText, this.maxTextLength);
+    if (chunks.length > 1) {
+      try {
+        await this.connector.send({
+          ...this.baseEnvelope(),
+          mode: "update",
+          targetMessageId: this.rootMessageId,
+          text: chunks[0] ?? "",
+        });
+
+        for (const chunk of chunks.slice(1)) {
+          await this.connector.send({
+            ...this.baseEnvelope(),
+            mode: "create",
+            replyToMessageId: this.rootMessageId,
+            text: chunk,
+          });
+        }
+      } catch (error) {
+        this.logger.warn({ err: error }, "Failed to send split final response to Discord");
+      }
+    }
+
+    await Promise.allSettled(this.pendingOps);
   }
 
   private baseEnvelope(): { platform: Platform; accountId: string; chatId: string; threadId?: string } {
@@ -115,7 +186,9 @@ export class EventForwarder {
       this.pendingFlush = null;
     }
 
-    const content = this.responseText.trim().length > 0 ? this.responseText : "_Thinking..._";
+    const content = this.responseText.trim().length > 0
+      ? truncate(this.responseText, this.maxTextLength)
+      : "_Thinking..._";
 
     try {
       await this.connector.send({

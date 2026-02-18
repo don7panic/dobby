@@ -75,6 +75,7 @@ export interface ConnectorCapabilities {
   supportsThread: boolean;
   supportsTyping: boolean;
   supportsFileUpload: boolean;
+  maxTextLength?: number;
 }
 
 export interface ConnectorPlugin {

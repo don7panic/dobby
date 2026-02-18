@@ -6,6 +6,10 @@
         "enabled": true
       },
       {
+        "package": "@im-agent-gateway/provider-claude",
+        "enabled": true
+      },
+      {
         "package": "@im-agent-gateway/connector-discord",
         "enabled": true
       },
@@ -25,6 +29,21 @@
           "model": "example-model",
           "thinkingLevel": "off",
           "modelsFile": "./models.custom.json"
+        }
+      },
+      "claude.main": {
+        "contributionId": "provider.claude",
+        "config": {
+          "model": "claude-sonnet-4-5",
+          "maxTurns": 20,
+          "sandboxedProcess": true,
+          "requireSandboxSpawn": true,
+          "dangerouslySkipPermissions": true,
+          "settingSources": [
+            "project",
+            "local"
+          ],
+          "authMode": "env"
         }
       }
     }
@@ -56,7 +75,7 @@
         "contributionId": "sandbox.boxlite",
         "config": {
           "workspaceRoot": "/Users/you/workspace",
-          "image": "alpine:latest",
+          "image": "gendosu/claude-code-docker:latest",
           "containerWorkspaceRoot": "/workspace",
           "reuseMode": "conversation",
           "autoRemove": true,

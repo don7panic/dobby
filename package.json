@@ -18,6 +18,7 @@
   "dependencies": {
     "@im-agent-gateway/connector-discord": "file:plugins/connector-discord",
     "@im-agent-gateway/plugin-sdk": "file:plugins/plugin-sdk",
+    "@im-agent-gateway/provider-claude": "file:plugins/provider-claude",
     "@im-agent-gateway/provider-pi": "file:plugins/provider-pi",
     "@im-agent-gateway/sandbox-core": "file:plugins/sandbox-core",
     "@mariozechner/pi-agent-core": "^0.53.0",

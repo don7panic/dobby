@@ -52,6 +52,7 @@
   "extensions": {
     "allowList": [
       { "package": "@im-agent-gateway/provider-pi", "enabled": true },
+      { "package": "@im-agent-gateway/provider-claude", "enabled": true },
       { "package": "@im-agent-gateway/connector-discord", "enabled": true },
       { "package": "@im-agent-gateway/sandbox-core", "enabled": true }
     ]
@@ -66,6 +67,18 @@
           "model": "kimi-k2.5",
           "thinkingLevel": "off",
           "modelsFile": "./models.custom.json"
+        }
+      },
+      "claude.main": {
+        "contributionId": "provider.claude",
+        "config": {
+          "model": "claude-sonnet-4-5",
+          "maxTurns": 20,
+          "sandboxedProcess": true,
+          "requireSandboxSpawn": true,
+          "dangerouslySkipPermissions": true,
+          "settingSources": ["project", "local"],
+          "authMode": "env"
         }
       }
     }
@@ -123,6 +136,10 @@
     - `abort()`
     - `dispose()`
 - 内置 `provider.pi` 将 `pi-coding-agent` 事件映射到 `GatewayAgentEvent`。
+- `provider.claude` 使用 Claude Agent SDK，默认启用 sandboxed process，并通过 `executor.spawn()` 在 route 选定 sandbox 中运行 Claude Code 子进程。
+- `provider.claude` 第一期采用 Claude 内置工具白名单映射 `route.tools`：
+  - `readonly`: `Read/Grep/Glob/LS`
+  - `full`: `Read/Grep/Glob/LS/Edit/Write/Bash`
 
 ## 6. Connector 插件协议
 - Connector contribution 必须实现：
@@ -139,7 +156,7 @@
   - `createInstance({ instanceId, config, host })`
 - Sandbox instance 必须返回：
   - `id`
-  - `executor`（统一 `exec/close` 协议）
+  - `executor`（统一 `exec/spawn/close` 协议）
 - route 通过 `sandboxId` 选择 executor；未指定时回退 `sandboxes.defaultSandboxId`。
 
 ## 8. 插件加载与生命周期
@@ -174,14 +191,15 @@
 
 当前仓库提供本地包化样例：
 - `/Users/oasis/workspace/im-agent-gateway/plugins/provider-pi`
+- `/Users/oasis/workspace/im-agent-gateway/plugins/provider-claude`
 - `/Users/oasis/workspace/im-agent-gateway/plugins/connector-discord`
 - `/Users/oasis/workspace/im-agent-gateway/plugins/sandbox-core`
 
 ## 10. 安全与治理（白名单 + 能力闸门）
 - 白名单：未列入 `allowList` 的包不会被加载。
-- 同进程运行：通过统一接口控制能力边界，不作为强对抗沙箱。
+- 宿主进程默认同进程加载扩展；provider 可通过 `executor.spawn()` 将实际模型子进程放入 sandbox。
 - sandbox 边界由具体 executor 保证（例如 docker hostWorkspaceRoot 限制）。
-- provider 工具访问继续受 route.projectRoot 限制。
+- `provider.claude` sandboxed 模式下，Claude 执行与工具调用在 sandbox 内运行，并受 route/projectRoot 与 sandbox 配置共同约束。
 
 ## 11. 错误处理与可观测性
 - 启动失败场景：
@@ -229,7 +247,7 @@
 ## 14. 默认值与假设
 - 插件来源：先支持本地安装验证，不支持 remote package 市场。
 - 信任模型：显式 allowList。
-- 隔离模型：同进程 + 能力闸门。
+- 隔离模型：同进程扩展 + 可选 provider sandboxed process（通过 `executor.spawn()`）。
 - Provider 策略：SDK-first（Claude/Codex 目标适配策略）。
 - Sandbox 策略：全局默认 + route 覆盖。
 - 生效策略：重启生效，不支持热加载。

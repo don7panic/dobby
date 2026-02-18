@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { GatewayLogger } from "../core/types.js";
-import type { ExecOptions, ExecResult, Executor } from "./executor.js";
+import type { ExecOptions, ExecResult, Executor, SpawnOptions, SpawnedProcess } from "./executor.js";
 
 function shellEscape(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -70,6 +70,46 @@ export class HostExecutor implements Executor {
         resolve({ stdout, stderr, code: code ?? 0, killed });
       });
     });
+  }
+
+  spawn(options: SpawnOptions): SpawnedProcess {
+    const cwd = options.cwd;
+    const child = spawn(options.command, options.args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      ...(cwd ? { cwd } : {}),
+      env: options.env ?? process.env,
+      detached: true,
+    });
+
+    const onAbort = () => {
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+          return;
+        } catch {
+          // Fall through to direct child kill.
+        }
+      }
+      child.kill("SIGKILL");
+    };
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        onAbort();
+      } else {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+        child.once("exit", () => {
+          options.signal?.removeEventListener("abort", onAbort);
+        });
+      }
+    }
+
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      child.kill("SIGKILL");
+      throw new Error("Host executor failed to create stdio pipes for spawned process");
+    }
+
+    return child as unknown as SpawnedProcess;
   }
 
   async close(): Promise<void> {

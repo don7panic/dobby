@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { resolve, sep } from "node:path";
+import { PassThrough, Writable } from "node:stream";
 import type { GatewayLogger } from "@im-agent-gateway/plugin-sdk";
 import { BOXLITE_CONTEXT_CONVERSATION_KEY_ENV, BOXLITE_CONTEXT_PROJECT_ROOT_ENV } from "./boxlite-context.js";
-import type { ExecOptions, ExecResult, Executor } from "@im-agent-gateway/plugin-sdk";
+import type { ExecOptions, ExecResult, Executor, SpawnOptions, SpawnedProcess } from "@im-agent-gateway/plugin-sdk";
 
 export interface BoxliteConfig {
   workspaceRoot: string;
@@ -26,6 +28,7 @@ interface BoxEntry {
       env?: Array<[string, string]>,
       tty?: boolean,
     ) => Promise<{
+      stdin?: () => Promise<{ write: (chunk: string | Buffer) => Promise<void>; close?: () => Promise<void>; end?: () => Promise<void> }>;
       stdout: () => Promise<{ next: () => Promise<string | null> }>;
       stderr: () => Promise<{ next: () => Promise<string | null> }>;
       wait: () => Promise<{ exitCode: number; errorMessage?: string | null }>;
@@ -247,6 +250,232 @@ export class BoxliteExecutor implements Executor {
     };
   }
 
+  spawn(options: SpawnOptions): SpawnedProcess {
+    if (this.closed) {
+      throw new Error("BoxliteExecutor is closed");
+    }
+
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const emitter = new EventEmitter();
+    emitter.on("error", () => undefined);
+
+    let killed = false;
+    let exitCode: number | null = null;
+    let exited = false;
+    let stopping = false;
+    let resolvedKey: string | null = null;
+    let resolvedBox: BoxEntry | null = null;
+
+    const stdinQueue: Buffer[] = [];
+    let stdinWriter:
+      | {
+          write: (chunk: string | Buffer) => Promise<void>;
+          close?: () => Promise<void>;
+          end?: () => Promise<void>;
+        }
+      | null = null;
+    let stdinClosed = false;
+
+    const emitExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (exited) return;
+      exited = true;
+      exitCode = code;
+      stdout.end();
+      stderr.end();
+      emitter.emit("exit", code, signal);
+    };
+
+    const emitError = (error: unknown) => {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      emitter.emit("error", normalized);
+    };
+
+    const closeRemoteStdin = async (): Promise<void> => {
+      if (!stdinWriter) return;
+      const closer = stdinWriter.close ?? stdinWriter.end;
+      if (!closer) return;
+      await closer.call(stdinWriter);
+    };
+
+    const stopProcess = async (signal: NodeJS.Signals = "SIGKILL"): Promise<void> => {
+      if (stopping) return;
+      stopping = true;
+
+      try {
+        if (resolvedKey && resolvedBox) {
+          await this.stopAndInvalidate(resolvedKey, resolvedBox, `spawn terminated (${signal})`);
+        }
+      } catch (error) {
+        emitError(error);
+      } finally {
+        emitExit(exitCode ?? -1, signal);
+      }
+    };
+
+    const kill = (signal: NodeJS.Signals = "SIGKILL"): boolean => {
+      if (exited) return false;
+      if (killed) return true;
+      killed = true;
+      void stopProcess(signal);
+      return true;
+    };
+
+    const onAbort = () => {
+      kill("SIGKILL");
+    };
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        kill("SIGKILL");
+      } else {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
+    const stdin = new Writable({
+      write: (chunk, _encoding, callback) => {
+        if (killed || exited) {
+          callback(new Error("BoxLite spawned process is not writable"));
+          return;
+        }
+
+        const payload = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        if (!stdinWriter) {
+          stdinQueue.push(payload);
+          callback();
+          return;
+        }
+
+        Promise.resolve()
+          .then(() => stdinWriter?.write(payload))
+          .then(() => callback())
+          .catch((error) => callback(error instanceof Error ? error : new Error(String(error))));
+      },
+      final: (callback) => {
+        stdinClosed = true;
+        if (!stdinWriter) {
+          callback();
+          return;
+        }
+
+        Promise.resolve()
+          .then(() => closeRemoteStdin())
+          .then(() => callback())
+          .catch((error) => callback(error instanceof Error ? error : new Error(String(error))));
+      },
+    });
+
+    const spawned: SpawnedProcess = {
+      stdin,
+      stdout,
+      stderr,
+      get killed() {
+        return killed;
+      },
+      get exitCode() {
+        return exitCode;
+      },
+      kill,
+      on: (event, listener) => {
+        emitter.on(event, listener as (...args: unknown[]) => void);
+      },
+      once: (event, listener) => {
+        emitter.once(event, listener as (...args: unknown[]) => void);
+      },
+      off: (event, listener) => {
+        emitter.off(event, listener as (...args: unknown[]) => void);
+      },
+    };
+
+    const pump = async (reader: { next: () => Promise<string | null> }, target: PassThrough): Promise<void> => {
+      while (!killed && !exited) {
+        const chunk = await reader.next();
+        if (chunk === null) break;
+        target.write(chunk);
+      }
+    };
+
+    void (async () => {
+      try {
+        const cwd = options.cwd ?? this.config.workspaceRoot;
+        const context = this.parseExecutionContext(cwd, options.env);
+        const key = this.resolveBoxKey(context.conversationKey, context.projectRoot);
+        const boxEntry = await this.getOrCreateBox(key, context.projectRoot);
+        resolvedKey = key;
+        resolvedBox = boxEntry;
+
+        if (killed || exited || options.signal?.aborted) {
+          await stopProcess("SIGKILL");
+          return;
+        }
+
+        const guestCwd = this.toContainerPath(cwd, context.projectRoot);
+        const argv = [options.command, ...options.args].map(shellEscape).join(" ");
+        const wrapped = `cd ${shellEscape(guestCwd)} && exec ${argv}`;
+
+        this.logger.info(
+          {
+            boxKey: key,
+            boxName: boxEntry.name,
+            projectRoot: context.projectRoot,
+            hostCwd: resolve(cwd),
+            guestCwd,
+            commandPreview: summarizeCommand(`${options.command} ${options.args.join(" ")}`),
+            reuseMode: this.config.reuseMode,
+          },
+          "BoxLite spawn starting",
+        );
+
+        const execution = await boxEntry.box.exec("sh", ["-lc", wrapped], toEnvTuples(context.commandEnv), options.tty ?? false);
+        if (typeof execution.stdin !== "function") {
+          throw new Error("BoxLite execution handle does not expose stdin; cannot run sandboxed provider process");
+        }
+
+        stdinWriter = await execution.stdin();
+        if (!stdinWriter || typeof stdinWriter.write !== "function") {
+          throw new Error("BoxLite stdin stream is unavailable for sandboxed provider process");
+        }
+
+        while (stdinQueue.length > 0) {
+          const chunk = stdinQueue.shift();
+          if (!chunk) continue;
+          await stdinWriter.write(chunk);
+        }
+        if (stdinClosed) {
+          await closeRemoteStdin();
+        }
+
+        const stdoutReader = await execution.stdout();
+        const stderrReader = await execution.stderr();
+        const [waitResult] = await Promise.all([
+          execution.wait(),
+          pump(stdoutReader, stdout),
+          pump(stderrReader, stderr),
+        ]);
+
+        if (!killed && !exited) {
+          if (waitResult.errorMessage && waitResult.errorMessage.trim().length > 0) {
+            stderr.write(`${waitResult.errorMessage}\n`);
+          }
+          exitCode = waitResult.exitCode;
+          emitExit(waitResult.exitCode, null);
+        }
+      } catch (error) {
+        if (!exited) {
+          emitError(error);
+          emitExit(exitCode ?? 1, null);
+        }
+      } finally {
+        if (options.signal) {
+          options.signal.removeEventListener("abort", onAbort);
+        }
+      }
+    })();
+
+    return spawned;
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     const keys = [...this.boxes.keys()];
@@ -328,6 +557,10 @@ export class BoxliteExecutor implements Executor {
     }
 
     const name = boxNameFromKey(key);
+    // New gateway process with conversation/workspace reuse can hit an old box that
+    // was created from a previous image/version. Proactively remove same-name stale box
+    // so creation is deterministic for current config.
+    await this.removeStaleNamedBox(name);
     const boxOptions: Record<string, unknown> = {
       image: this.config.image,
       autoRemove: this.config.autoRemove,
@@ -376,6 +609,30 @@ export class BoxliteExecutor implements Executor {
     );
     await this.probeBox(created);
     return created;
+  }
+
+  private async removeStaleNamedBox(name: string): Promise<void> {
+    if (typeof this.runtime.remove !== "function") {
+      return;
+    }
+
+    try {
+      await this.runtime.remove(name, true);
+      this.logger.info(
+        {
+          boxName: name,
+        },
+        "Removed stale BoxLite box before create/getOrCreate",
+      );
+    } catch (error) {
+      this.logger.debug(
+        {
+          err: error,
+          boxName: name,
+        },
+        "No stale BoxLite box removed (ignored)",
+      );
+    }
   }
 
   private async probeBox(entry: BoxEntry): Promise<void> {

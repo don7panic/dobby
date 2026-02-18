@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve, sep } from "node:path";
 import type { GatewayLogger } from "@im-agent-gateway/plugin-sdk";
-import type { ExecOptions, ExecResult, Executor } from "@im-agent-gateway/plugin-sdk";
+import type { ExecOptions, ExecResult, Executor, SpawnOptions, SpawnedProcess } from "@im-agent-gateway/plugin-sdk";
 
 export interface DockerConfig {
   container: string;
@@ -93,6 +93,52 @@ export class DockerExecutor implements Executor {
         resolveResult({ stdout, stderr, code: code ?? 0, killed });
       });
     });
+  }
+
+  spawn(options: SpawnOptions): SpawnedProcess {
+    const cwd = options.cwd ?? this.config.hostWorkspaceRoot;
+    const containerCwd = this.toContainerPath(cwd);
+    const argv = [options.command, ...options.args].map(shellEscape).join(" ");
+    const wrapped = `cd ${shellEscape(containerCwd)} && exec ${argv}`;
+
+    const args = ["exec", "-i"];
+    if (options.tty) {
+      args.push("-t");
+    }
+    if (options.env) {
+      for (const [key, value] of Object.entries(options.env)) {
+        if (value !== undefined) {
+          args.push("-e", `${key}=${value}`);
+        }
+      }
+    }
+    args.push(this.config.container, "sh", "-lc", wrapped);
+
+    const child = spawn("docker", args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const onAbort = () => {
+      child.kill("SIGKILL");
+    };
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        onAbort();
+      } else {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+        child.once("exit", () => {
+          options.signal?.removeEventListener("abort", onAbort);
+        });
+      }
+    }
+
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      child.kill("SIGKILL");
+      throw new Error("Docker executor failed to create stdio pipes for spawned process");
+    }
+
+    return child as unknown as SpawnedProcess;
   }
 
   async close(): Promise<void> {
