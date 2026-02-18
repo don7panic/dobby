@@ -1,0 +1,17 @@
+{
+  "apiVersion": "1.0",
+  "name": "@im-agent-gateway/sandbox-core",
+  "version": "0.1.0",
+  "contributions": [
+    {
+      "id": "sandbox.docker",
+      "kind": "sandbox",
+      "entry": "./docker.js"
+    },
+    {
+      "id": "sandbox.boxlite",
+      "kind": "sandbox",
+      "entry": "./boxlite.js"
+    }
+  ]
+}

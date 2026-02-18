@@ -49,7 +49,7 @@ export class RuntimeRegistry {
     if (!entry) return false;
 
     try {
-      await entry.runtime.session.abort();
+      await entry.runtime.runtime.abort();
       return true;
     } catch (error) {
       this.logger.error({ err: error, conversationKey: key }, "Failed to abort runtime");

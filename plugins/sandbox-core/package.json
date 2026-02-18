@@ -1,0 +1,14 @@
+{
+  "name": "@im-agent-gateway/sandbox-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Built-in sandbox extensions package",
+  "main": "./docker.js",
+  "dependencies": {
+    "@boxlite-ai/boxlite": "^0.2.11"
+  },
+  "peerDependencies": {
+    "@im-agent-gateway/plugin-sdk": "^0.1.0"
+  }
+}

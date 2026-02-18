@@ -1,15 +1,77 @@
 {
-  "discord": {
-    "enabled": true,
-    "botTokenEnv": "DISCORD_BOT_TOKEN",
-    "allowDirectMessages": true,
-    "allowedGuildIds": []
+  "extensions": {
+    "allowList": [
+      {
+        "package": "@im-agent-gateway/provider-pi",
+        "enabled": true
+      },
+      {
+        "package": "@im-agent-gateway/connector-discord",
+        "enabled": true
+      },
+      {
+        "package": "@im-agent-gateway/sandbox-core",
+        "enabled": true
+      }
+    ]
+  },
+  "providers": {
+    "defaultProviderId": "pi.main",
+    "instances": {
+      "pi.main": {
+        "contributionId": "provider.pi",
+        "config": {
+          "provider": "custom-openai",
+          "model": "example-model",
+          "thinkingLevel": "off",
+          "modelsFile": "./models.custom.json"
+        }
+      }
+    }
+  },
+  "connectors": {
+    "instances": {
+      "discord.main": {
+        "contributionId": "connector.discord",
+        "config": {
+          "botTokenEnv": "DISCORD_BOT_TOKEN",
+          "allowDirectMessages": true,
+          "allowedGuildIds": []
+        }
+      }
+    }
+  },
+  "sandboxes": {
+    "defaultSandboxId": "host.builtin",
+    "instances": {
+      "docker.main": {
+        "contributionId": "sandbox.docker",
+        "config": {
+          "container": "im-agent-sandbox",
+          "hostWorkspaceRoot": "/Users/you/workspace",
+          "containerWorkspaceRoot": "/workspace"
+        }
+      },
+      "boxlite.main": {
+        "contributionId": "sandbox.boxlite",
+        "config": {
+          "workspaceRoot": "/Users/you/workspace",
+          "image": "alpine:latest",
+          "containerWorkspaceRoot": "/workspace",
+          "reuseMode": "conversation",
+          "autoRemove": true,
+          "securityProfile": "maximum"
+        }
+      }
+    }
   },
   "routing": {
     "defaultRouteId": "projectA",
     "channelMap": {
-      "YOUR_DISCORD_CHANNEL_ID_A": "projectA",
-      "YOUR_DISCORD_CHANNEL_ID_B": "projectB"
+      "discord.main": {
+        "YOUR_DISCORD_CHANNEL_ID_A": "projectA",
+        "YOUR_DISCORD_CHANNEL_ID_B": "projectB"
+      }
     },
     "routes": {
       "projectA": {
@@ -17,37 +79,19 @@
         "tools": "full",
         "systemPromptFile": "",
         "allowMentionsOnly": true,
-        "maxConcurrentTurns": 1
+        "maxConcurrentTurns": 1,
+        "providerId": "pi.main",
+        "sandboxId": "host.builtin"
       },
       "projectB": {
         "projectRoot": "/Users/you/workspace/project-b",
         "tools": "full",
         "systemPromptFile": "",
         "allowMentionsOnly": true,
-        "maxConcurrentTurns": 1
+        "maxConcurrentTurns": 1,
+        "providerId": "pi.main",
+        "sandboxId": "docker.main"
       }
-    }
-  },
-  "agent": {
-    "provider": "custom-openai",
-    "model": "example-model",
-    "thinkingLevel": "off",
-    "modelsFile": "./models.custom.json"
-  },
-  "sandbox": {
-    "backend": "host",
-    "docker": {
-      "container": "im-agent-sandbox",
-      "hostWorkspaceRoot": "/Users/you/workspace",
-      "containerWorkspaceRoot": "/workspace"
-    },
-    "boxlite": {
-      "workspaceRoot": "/Users/you/workspace",
-      "image": "alpine:latest",
-      "containerWorkspaceRoot": "/workspace",
-      "reuseMode": "conversation",
-      "autoRemove": true,
-      "securityProfile": "maximum"
     }
   },
   "data": {

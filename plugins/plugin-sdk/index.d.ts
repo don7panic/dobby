@@ -1,12 +1,8 @@
 import type { ImageContent } from "@mariozechner/pi-ai";
 import type { Logger } from "pino";
-import type { Executor } from "../sandbox/executor.js";
 
 export type Platform = string;
 export type ToolProfile = "full" | "readonly";
-export type ExtensionKind = "provider" | "connector" | "sandbox";
-export type ExtensionApiVersion = "1.0";
-export const BUILTIN_HOST_SANDBOX_ID = "host.builtin";
 
 export interface InboundAttachment {
   id: string;
@@ -97,66 +93,9 @@ export interface RouteProfile {
   sandboxId?: string;
 }
 
-export interface RoutingConfig {
-  defaultRouteId?: string;
-  channelMap: Record<string, Record<string, string>>;
-  routes: Record<string, RouteProfile>;
-}
-
-export interface ExtensionPackageConfig {
-  package: string;
-  enabled?: boolean;
-}
-
-export interface ExtensionsConfig {
-  allowList: ExtensionPackageConfig[];
-}
-
-export interface ExtensionInstanceConfig {
-  contributionId: string;
-  config: Record<string, unknown>;
-}
-
-export interface ProvidersConfig {
-  defaultProviderId: string;
-  instances: Record<string, ExtensionInstanceConfig>;
-}
-
-export interface ConnectorsConfig {
-  instances: Record<string, ExtensionInstanceConfig>;
-}
-
-export interface SandboxesConfig {
-  defaultSandboxId?: string;
-  instances: Record<string, ExtensionInstanceConfig>;
-}
-
-export interface DataConfig {
-  rootDir: string;
-  sessionsDir: string;
-  attachmentsDir: string;
-  logsDir: string;
-  stateDir: string;
-  dedupTtlMs: number;
-}
-
-export interface GatewayConfig {
-  extensions: ExtensionsConfig;
-  providers: ProvidersConfig;
-  connectors: ConnectorsConfig;
-  sandboxes: SandboxesConfig;
-  routing: RoutingConfig;
-  data: DataConfig;
-}
-
 export interface RouteResolution {
   routeId: string;
   profile: RouteProfile;
-}
-
-export interface PromptPayload {
-  text: string;
-  images: ImageContent[];
 }
 
 export type GatewayAgentEvent =
@@ -173,29 +112,34 @@ export interface GatewayAgentRuntime {
   dispose(): void;
 }
 
-export interface ConversationRuntime {
-  key: string;
-  routeId: string;
-  route: RouteProfile;
-  providerId: string;
-  sandboxId: string;
-  runtime: GatewayAgentRuntime;
-  close: () => Promise<void>;
+export interface ExecOptions {
+  timeoutSeconds?: number;
+  signal?: AbortSignal;
+  env?: NodeJS.ProcessEnv;
 }
 
-export interface ExtensionContributionManifest {
-  id: string;
-  kind: ExtensionKind;
-  entry: string;
-  capabilities?: Record<string, unknown>;
+export interface ExecResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+  killed: boolean;
 }
 
-export interface ExtensionManifest {
-  apiVersion: ExtensionApiVersion | string;
-  name: string;
-  version: string;
-  contributions: ExtensionContributionManifest[];
+export interface Executor {
+  exec(command: string, cwd: string, options?: ExecOptions): Promise<ExecResult>;
+  close(): Promise<void>;
 }
+
+export interface DataConfig {
+  rootDir: string;
+  sessionsDir: string;
+  attachmentsDir: string;
+  logsDir: string;
+  stateDir: string;
+  dedupTtlMs: number;
+}
+
+export type GatewayLogger = Logger;
 
 export interface ExtensionHostContext {
   logger: GatewayLogger;
@@ -255,7 +199,3 @@ export interface SandboxContributionModule {
   kind: "sandbox";
   createInstance(options: SandboxInstanceCreateOptions): Promise<SandboxInstance> | SandboxInstance;
 }
-
-export type ExtensionContributionModule = ProviderContributionModule | ConnectorContributionModule | SandboxContributionModule;
-
-export type GatewayLogger = Logger;

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Message } from "discord.js";
-import type { GatewayLogger, InboundAttachment, InboundEnvelope } from "../../core/types.js";
+import type { GatewayLogger, InboundAttachment, InboundEnvelope } from "@im-agent-gateway/plugin-sdk";
 
 function stripBotMention(text: string, botUserId: string): string {
   const mentionRegex = new RegExp(`<@!?${botUserId}>`, "g");
@@ -40,6 +40,7 @@ function mapAttachmentBase(messageAttachment: {
 
 export async function mapDiscordMessage(
   message: Message,
+  connectorId: string,
   botUserId: string,
   attachmentsRoot: string,
   logger: GatewayLogger,
@@ -78,6 +79,7 @@ export async function mapDiscordMessage(
   }
 
   return {
+    connectorId,
     platform: "discord",
     accountId: botUserId,
     routeChannelId,

@@ -1,0 +1,17 @@
+{
+  "apiVersion": "1.0",
+  "name": "@im-agent-gateway/provider-pi",
+  "version": "0.1.0",
+  "contributions": [
+    {
+      "id": "provider.pi",
+      "kind": "provider",
+      "entry": "./index.js",
+      "capabilities": {
+        "supportsStreaming": true,
+        "supportsAbort": true,
+        "supportsImages": true
+      }
+    }
+  ]
+}

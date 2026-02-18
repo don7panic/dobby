@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { resolve, sep } from "node:path";
-import type { GatewayLogger } from "../core/types.js";
-import type { ExecOptions, ExecResult, Executor } from "./executor.js";
+import type { GatewayLogger } from "@im-agent-gateway/plugin-sdk";
+import type { ExecOptions, ExecResult, Executor } from "@im-agent-gateway/plugin-sdk";
 
-interface DockerConfig {
+export interface DockerConfig {
   container: string;
   hostWorkspaceRoot: string;
   containerWorkspaceRoot: string;

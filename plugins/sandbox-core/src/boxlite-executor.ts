@@ -1,10 +1,19 @@
 import { createHash } from "node:crypto";
 import { resolve, sep } from "node:path";
-import type { GatewayLogger, SandboxConfig } from "../core/types.js";
+import type { GatewayLogger } from "@im-agent-gateway/plugin-sdk";
 import { BOXLITE_CONTEXT_CONVERSATION_KEY_ENV, BOXLITE_CONTEXT_PROJECT_ROOT_ENV } from "./boxlite-context.js";
-import type { ExecOptions, ExecResult, Executor } from "./executor.js";
+import type { ExecOptions, ExecResult, Executor } from "@im-agent-gateway/plugin-sdk";
 
-type BoxliteConfig = Extract<SandboxConfig, { backend: "boxlite" }>["boxlite"];
+export interface BoxliteConfig {
+  workspaceRoot: string;
+  image: string;
+  cpus?: number;
+  memoryMib?: number;
+  containerWorkspaceRoot: string;
+  reuseMode: "conversation" | "workspace";
+  autoRemove: boolean;
+  securityProfile: "development" | "standard" | "maximum";
+}
 
 interface BoxEntry {
   key: string;

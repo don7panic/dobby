@@ -1,14 +1,24 @@
 import { mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import pino from "pino";
-import { SessionFactory } from "./agent/session-factory.js";
-import { DiscordConnector } from "./connectors/discord/connector.js";
 import { DedupStore } from "./core/dedup-store.js";
 import { Gateway } from "./core/gateway.js";
 import { loadGatewayConfig, RouteResolver } from "./core/routing.js";
 import { RuntimeRegistry } from "./core/runtime-registry.js";
-import type { ConnectorPlugin, SandboxConfig } from "./core/types.js";
-import { createExecutor } from "./sandbox/executor.js";
+import { BUILTIN_HOST_SANDBOX_ID } from "./core/types.js";
+import type {
+  ExtensionHostContext,
+  GatewayConfig,
+  GatewayLogger,
+  ProviderInstance,
+  ProvidersConfig,
+  SandboxInstance,
+  SandboxesConfig,
+} from "./core/types.js";
+import { ExtensionLoader } from "./extension/loader.js";
+import { ExtensionRegistry } from "./extension/registry.js";
+import type { Executor } from "./sandbox/executor.js";
+import { HostExecutor } from "./sandbox/host-executor.js";
 
 function parseConfigPath(argv: string[]): string {
   const configFlagIndex = argv.findIndex((arg) => arg === "--config");
@@ -29,32 +39,72 @@ async function ensureDataDirs(rootDir: string): Promise<void> {
   await mkdir(join(rootDir, "state"), { recursive: true });
 }
 
-function summarizeSandboxConfig(config: SandboxConfig): Record<string, unknown> {
-  if (config.backend === "host") {
-    return {
-      backend: "host",
-    };
+async function closeProviderInstances(providers: Map<string, ProviderInstance>, logger: GatewayLogger): Promise<void> {
+  for (const [providerId, provider] of providers.entries()) {
+    if (!provider.close) continue;
+    try {
+      await provider.close();
+    } catch (error) {
+      logger.warn({ err: error, providerId }, "Failed to close provider instance");
+    }
+  }
+}
+
+async function closeSandboxInstances(sandboxes: Map<string, SandboxInstance>, logger: GatewayLogger): Promise<void> {
+  for (const [sandboxId, sandbox] of sandboxes.entries()) {
+    try {
+      await sandbox.executor.close();
+    } catch (error) {
+      logger.warn({ err: error, sandboxId }, "Failed to close sandbox executor");
+    }
+
+    if (!sandbox.close) continue;
+    try {
+      await sandbox.close();
+    } catch (error) {
+      logger.warn({ err: error, sandboxId }, "Failed to close sandbox instance");
+    }
+  }
+}
+
+function selectProviderInstances(config: GatewayConfig): ProvidersConfig {
+  const requiredProviderIds = new Set<string>([config.providers.defaultProviderId]);
+  for (const route of Object.values(config.routing.routes)) {
+    if (route.providerId) {
+      requiredProviderIds.add(route.providerId);
+    }
   }
 
-  if (config.backend === "docker") {
-    return {
-      backend: "docker",
-      container: config.docker.container,
-      hostWorkspaceRoot: config.docker.hostWorkspaceRoot,
-      containerWorkspaceRoot: config.docker.containerWorkspaceRoot,
-    };
-  }
+  const instances = Object.fromEntries(
+    Object.entries(config.providers.instances).filter(([instanceId]) => requiredProviderIds.has(instanceId)),
+  );
 
   return {
-    backend: "boxlite",
-    workspaceRoot: config.boxlite.workspaceRoot,
-    image: config.boxlite.image,
-    containerWorkspaceRoot: config.boxlite.containerWorkspaceRoot,
-    reuseMode: config.boxlite.reuseMode,
-    autoRemove: config.boxlite.autoRemove,
-    securityProfile: config.boxlite.securityProfile,
-    ...(config.boxlite.cpus !== undefined ? { cpus: config.boxlite.cpus } : {}),
-    ...(config.boxlite.memoryMib !== undefined ? { memoryMib: config.boxlite.memoryMib } : {}),
+    defaultProviderId: config.providers.defaultProviderId,
+    instances,
+  };
+}
+
+function selectSandboxInstances(config: GatewayConfig): SandboxesConfig {
+  const defaultSandboxId = config.sandboxes.defaultSandboxId ?? BUILTIN_HOST_SANDBOX_ID;
+  const requiredSandboxIds = new Set<string>();
+  if (defaultSandboxId !== BUILTIN_HOST_SANDBOX_ID) {
+    requiredSandboxIds.add(defaultSandboxId);
+  }
+
+  for (const route of Object.values(config.routing.routes)) {
+    if (route.sandboxId && route.sandboxId !== BUILTIN_HOST_SANDBOX_ID) {
+      requiredSandboxIds.add(route.sandboxId);
+    }
+  }
+
+  const instances = Object.fromEntries(
+    Object.entries(config.sandboxes.instances).filter(([instanceId]) => requiredSandboxIds.has(instanceId)),
+  );
+
+  return {
+    ...(config.sandboxes.defaultSandboxId ? { defaultSandboxId: config.sandboxes.defaultSandboxId } : {}),
+    instances,
   };
 }
 
@@ -69,35 +119,57 @@ async function main(): Promise<void> {
     level: process.env.LOG_LEVEL ?? "info",
   });
 
-  const executor = await createExecutor(config.sandbox, logger);
+  const loader = new ExtensionLoader(logger);
+  const loadedPackages = await loader.loadAllowList(config.extensions.allowList);
+  const registry = new ExtensionRegistry();
+  registry.registerPackages(loadedPackages);
+
   logger.info(
     {
-      sandbox: summarizeSandboxConfig(config.sandbox),
-      executorType: executor.constructor?.name ?? "unknown",
+      packages: loadedPackages.map((pkg) => ({
+        package: pkg.packageName,
+        manifestName: pkg.manifest.name,
+        version: pkg.manifest.version,
+        contributions: pkg.manifest.contributions.map((contribution) => `${contribution.kind}:${contribution.id}`),
+      })),
     },
-    "Sandbox backend configured",
+    "Extension packages loaded",
   );
-  const dedupStore = new DedupStore(join(config.data.stateDir, "dedup.json"), config.data.dedupTtlMs, logger);
-  const routeResolver = new RouteResolver(config.routing);
-  const runtimeRegistry = new RuntimeRegistry(logger);
-  const sessionFactory = new SessionFactory({ config, executor, logger });
 
-  const connectors: ConnectorPlugin[] = [];
-  if (config.discord.enabled) {
-    connectors.push(new DiscordConnector(config.discord, join(config.data.attachmentsDir, "discord"), logger));
+  const extensionHostContext: ExtensionHostContext = {
+    logger,
+    configBaseDir: dirname(configPath),
+  };
+
+  const activeProvidersConfig = selectProviderInstances(config);
+  const activeSandboxesConfig = selectSandboxInstances(config);
+
+  const providers = await registry.createProviderInstances(activeProvidersConfig, extensionHostContext, config.data);
+  const connectors = await registry.createConnectorInstances(config.connectors, extensionHostContext, config.data.attachmentsDir);
+  const sandboxes = await registry.createSandboxInstances(activeSandboxesConfig, extensionHostContext);
+  const hostExecutor = new HostExecutor(logger);
+  const executors = new Map<string, Executor>();
+  executors.set(BUILTIN_HOST_SANDBOX_ID, hostExecutor);
+  for (const [sandboxId, sandbox] of sandboxes.entries()) {
+    executors.set(sandboxId, sandbox.executor);
   }
 
   if (connectors.length === 0) {
-    throw new Error("No connectors are enabled. Set discord.enabled=true in config/gateway.json");
+    throw new Error("No connectors are configured. Add connector instances in config/gateway.json");
   }
+
+  const dedupStore = new DedupStore(join(config.data.stateDir, "dedup.json"), config.data.dedupTtlMs, logger);
+  const routeResolver = new RouteResolver(config.routing);
+  const runtimeRegistry = new RuntimeRegistry(logger);
 
   const gateway = new Gateway({
     config,
     connectors,
+    providers,
+    executors,
     routeResolver,
     dedupStore,
     runtimeRegistry,
-    sessionFactory,
     logger,
   });
 
@@ -107,7 +179,9 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down gateway");
     await gateway.stop();
-    await executor.close();
+    await hostExecutor.close();
+    await closeProviderInstances(providers, logger);
+    await closeSandboxInstances(sandboxes, logger);
     process.exit(0);
   };
 

@@ -1,34 +1,39 @@
 import { readFile } from "node:fs/promises";
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { EventForwarder } from "../agent/event-forwarder.js";
-import type { SessionFactory } from "../agent/session-factory.js";
+import type { Executor } from "../sandbox/executor.js";
 import type { DedupStore } from "./dedup-store.js";
 import { RouteResolver } from "./routing.js";
 import { RuntimeRegistry } from "./runtime-registry.js";
 import type {
   ConnectorPlugin,
+  GatewayAgentRuntime,
   GatewayConfig,
   GatewayLogger,
   InboundAttachment,
   InboundEnvelope,
+  Platform,
   PromptPayload,
+  ProviderInstance,
   RouteResolution,
 } from "./types.js";
+import { BUILTIN_HOST_SANDBOX_ID } from "./types.js";
 
 interface GatewayOptions {
   config: GatewayConfig;
   connectors: ConnectorPlugin[];
+  providers: Map<string, ProviderInstance>;
+  executors: Map<string, Executor>;
   routeResolver: RouteResolver;
   dedupStore: DedupStore;
   runtimeRegistry: RuntimeRegistry;
-  sessionFactory: SessionFactory;
   logger: GatewayLogger;
 }
 
 interface StopControlEvent {
   type: "stop";
-  platform: "discord";
+  connectorId: string;
+  platform: Platform;
   accountId: string;
   chatId: string;
   threadId?: string;
@@ -39,20 +44,20 @@ function isImageAttachment(attachment: InboundAttachment): boolean {
 }
 
 function dedupKey(message: InboundEnvelope): string {
-  return `${message.platform}:${message.accountId}:${message.chatId}:${message.messageId}`;
+  return `${message.connectorId}:${message.platform}:${message.accountId}:${message.chatId}:${message.messageId}`;
 }
 
 function conversationKey(message: InboundEnvelope): string {
-  return `${message.platform}:${message.accountId}:${message.chatId}:${message.threadId ?? "root"}`;
+  return `${message.connectorId}:${message.platform}:${message.accountId}:${message.chatId}:${message.threadId ?? "root"}`;
 }
 
 export class Gateway {
-  private readonly connectorsByPlatform = new Map<string, ConnectorPlugin>();
+  private readonly connectorsById = new Map<string, ConnectorPlugin>();
   private started = false;
 
   constructor(private readonly options: GatewayOptions) {
     for (const connector of options.connectors) {
-      this.connectorsByPlatform.set(connector.platform, connector);
+      this.connectorsById.set(connector.id, connector);
     }
   }
 
@@ -87,7 +92,7 @@ export class Gateway {
   }
 
   private outboundBaseFromInbound(message: InboundEnvelope): {
-    platform: "discord";
+    platform: Platform;
     accountId: string;
     chatId: string;
     threadId?: string;
@@ -101,7 +106,7 @@ export class Gateway {
   }
 
   private outboundBaseFromControl(event: StopControlEvent): {
-    platform: "discord";
+    platform: Platform;
     accountId: string;
     chatId: string;
     threadId?: string;
@@ -115,9 +120,9 @@ export class Gateway {
   }
 
   private async handleInbound(message: InboundEnvelope): Promise<void> {
-    const connector = this.connectorsByPlatform.get(message.platform);
+    const connector = this.connectorsById.get(message.connectorId);
     if (!connector) {
-      this.options.logger.warn({ platform: message.platform }, "No connector found for inbound message");
+      this.options.logger.warn({ connectorId: message.connectorId }, "No connector found for inbound message");
       return;
     }
 
@@ -126,10 +131,9 @@ export class Gateway {
       this.options.logger.debug({ dedupKey: key }, "Skipping duplicate message");
       return;
     }
-
     this.options.dedupStore.add(key);
 
-    const route = this.options.routeResolver.resolve(message.routeChannelId);
+    const route = this.options.routeResolver.resolve(message.connectorId, message.routeChannelId);
     if (!route) {
       await connector.send({
         ...this.outboundBaseFromInbound(message),
@@ -145,25 +149,58 @@ export class Gateway {
       return;
     }
 
+    const providerId = route.profile.providerId ?? this.options.config.providers.defaultProviderId;
+    const sandboxId = route.profile.sandboxId ?? this.options.config.sandboxes.defaultSandboxId ?? BUILTIN_HOST_SANDBOX_ID;
+    const provider = this.options.providers.get(providerId);
+    const executor = this.options.executors.get(sandboxId);
+
+    if (!provider || !executor) {
+      await connector.send({
+        ...this.outboundBaseFromInbound(message),
+        mode: "create",
+        replyToMessageId: message.messageId,
+        text: `Route runtime not available (provider='${providerId}', sandbox='${sandboxId}')`,
+      });
+      return;
+    }
+
     const convKey = conversationKey(message);
 
-    await this.options.runtimeRegistry.getOrCreate(convKey, async () =>
-      this.options.sessionFactory.createRuntime(convKey, route, message),
-    );
+    await this.options.runtimeRegistry.getOrCreate(convKey, async () => {
+      const runtime = await provider.createRuntime({
+        conversationKey: convKey,
+        route,
+        inbound: message,
+        executor,
+      });
+
+      return {
+        key: convKey,
+        routeId: route.routeId,
+        route: route.profile,
+        providerId,
+        sandboxId,
+        runtime,
+        close: async () => {
+          runtime.dispose();
+        },
+      };
+    });
 
     await this.options.runtimeRegistry.enqueue(convKey, async (runtime) => {
-      await this.processMessage(connector, runtime.session, route, message);
+      await this.processMessage(connector, runtime.runtime, route, message);
     });
   }
 
   private async processMessage(
     connector: ConnectorPlugin,
-    session: AgentSession,
+    runtime: GatewayAgentRuntime,
     route: RouteResolution,
     message: InboundEnvelope,
   ): Promise<void> {
     this.options.logger.info(
       {
+        connectorId: message.connectorId,
         routeId: route.routeId,
         channelId: message.routeChannelId,
         chatId: message.chatId,
@@ -181,13 +218,12 @@ export class Gateway {
     });
 
     const rootMessageId = initial.messageId ?? message.messageId;
-
     const forwarder = new EventForwarder(connector, message, rootMessageId, this.options.logger);
-    const unsubscribe = session.subscribe(forwarder.handleEvent);
+    const unsubscribe = runtime.subscribe(forwarder.handleEvent);
 
     try {
       const payload = await this.buildPromptPayload(message);
-      await session.prompt(payload.text, payload.images.length > 0 ? { images: payload.images } : undefined);
+      await runtime.prompt(payload.text, payload.images.length > 0 ? { images: payload.images } : undefined);
       await forwarder.finalize();
       this.options.logger.info({ routeId: route.routeId, messageId: message.messageId }, "Inbound message processed");
     } catch (error) {
@@ -244,12 +280,11 @@ export class Gateway {
   }
 
   private async handleControl(event: StopControlEvent): Promise<void> {
-    const convKey = `${event.platform}:${event.accountId}:${event.chatId}:${event.threadId ?? "root"}`;
-    const connector = this.connectorsByPlatform.get(event.platform);
-
+    const convKey = `${event.connectorId}:${event.platform}:${event.accountId}:${event.chatId}:${event.threadId ?? "root"}`;
+    const connector = this.connectorsById.get(event.connectorId);
     const aborted = await this.options.runtimeRegistry.abort(convKey);
-    this.options.logger.info({ conversationKey: convKey, aborted }, "Stop requested");
 
+    this.options.logger.info({ conversationKey: convKey, aborted }, "Stop requested");
     if (!connector) return;
 
     try {

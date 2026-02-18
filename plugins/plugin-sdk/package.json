@@ -1,0 +1,9 @@
+{
+  "name": "@im-agent-gateway/plugin-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Public plugin contracts for im-agent-gateway extensions",
+  "main": "./index.js",
+  "types": "./index.d.ts"
+}

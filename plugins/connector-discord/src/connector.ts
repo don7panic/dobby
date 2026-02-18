@@ -11,11 +11,16 @@ import type {
   ConnectorContext,
   ConnectorPlugin,
   ConnectorSendResult,
-  DiscordConfig,
   GatewayLogger,
   OutboundEnvelope,
-} from "../../core/types.js";
+} from "@im-agent-gateway/plugin-sdk";
 import { mapDiscordMessage } from "./mapper.js";
+
+export interface DiscordConnectorConfig {
+  botTokenEnv: string;
+  allowDirectMessages: boolean;
+  allowedGuildIds: string[];
+}
 
 interface DiscordEditableMessage {
   id: string;
@@ -54,6 +59,7 @@ function hasMessagingApi(channel: unknown): channel is DiscordTextChannel {
 }
 
 export class DiscordConnector implements ConnectorPlugin {
+  readonly id: string;
   readonly platform = "discord" as const;
   readonly name = "discord";
   readonly capabilities: ConnectorCapabilities = {
@@ -68,10 +74,13 @@ export class DiscordConnector implements ConnectorPlugin {
   private botUserId: string | null = null;
 
   constructor(
-    private readonly config: DiscordConfig,
+    id: string,
+    private readonly config: DiscordConnectorConfig,
     private readonly attachmentsRoot: string,
     private readonly logger: GatewayLogger,
-  ) {}
+  ) {
+    this.id = id;
+  }
 
   async start(ctx: ConnectorContext): Promise<void> {
     const token = process.env[this.config.botTokenEnv];
@@ -113,6 +122,7 @@ export class DiscordConnector implements ConnectorPlugin {
       if (message.content.trim().toLowerCase() === "stop") {
         await this.ctx.emitControl({
           type: "stop",
+          connectorId: this.id,
           platform: "discord",
           accountId: this.botUserId,
           chatId: message.channelId,
@@ -121,7 +131,7 @@ export class DiscordConnector implements ConnectorPlugin {
         return;
       }
 
-      const inbound = await mapDiscordMessage(message, this.botUserId, this.attachmentsRoot, this.logger);
+      const inbound = await mapDiscordMessage(message, this.id, this.botUserId, this.attachmentsRoot, this.logger);
       if (!inbound) return;
 
       await this.ctx.emitInbound(inbound);

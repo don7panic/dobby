@@ -1,0 +1,11 @@
+{
+  "name": "@im-agent-gateway/provider-pi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Built-in pi provider extension package",
+  "main": "./index.js",
+  "peerDependencies": {
+    "@im-agent-gateway/plugin-sdk": "^0.1.0"
+  }
+}

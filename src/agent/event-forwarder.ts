@@ -1,34 +1,8 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-import type { ConnectorPlugin, GatewayLogger, InboundEnvelope } from "../core/types.js";
+import type { ConnectorPlugin, GatewayAgentEvent, GatewayLogger, InboundEnvelope, Platform } from "../core/types.js";
 
 interface ForwarderOptions {
   updateIntervalMs?: number;
   toolMessageMode?: "none" | "errors" | "all";
-}
-
-function extractAssistantText(message: AgentMessage): string {
-  if (message.role !== "assistant") return "";
-  const blocks = message.content.filter((block): block is { type: "text"; text: string } => block.type === "text");
-  return blocks.map((block) => block.text).join("\n");
-}
-
-function extractToolResultText(result: unknown): string {
-  if (!result || typeof result !== "object") return "(no output)";
-  const content = (result as { content?: unknown }).content;
-  if (!Array.isArray(content)) return "(no output)";
-
-  const textBlocks = content.filter(
-    (block): block is { type: "text"; text: string } =>
-      typeof block === "object" &&
-      block !== null &&
-      "type" in block &&
-      (block as { type: string }).type === "text" &&
-      "text" in block,
-  );
-
-  const text = textBlocks.map((block) => block.text).join("\n").trim();
-  return text.length > 0 ? text : "(no output)";
 }
 
 function truncate(text: string, max = 2000): string {
@@ -54,27 +28,22 @@ export class EventForwarder {
     this.toolMessageMode = options.toolMessageMode ?? "none";
   }
 
-  handleEvent = (event: AgentSessionEvent): void => {
-    if (event.type === "message_update") {
-      if (event.assistantMessageEvent.type === "text_delta") {
-        this.responseText += event.assistantMessageEvent.delta;
-        this.scheduleFlush();
+  handleEvent = (event: GatewayAgentEvent): void => {
+    if (event.type === "message_delta") {
+      this.responseText += event.delta;
+      this.scheduleFlush();
+      return;
+    }
+
+    if (event.type === "message_complete") {
+      if (event.text.trim().length > 0) {
+        this.responseText = event.text;
+        void this.flushNow();
       }
       return;
     }
 
-    if (event.type === "message_end") {
-      if (event.message.role === "assistant") {
-        const finalText = extractAssistantText(event.message);
-        if (finalText.trim().length > 0) {
-          this.responseText = finalText;
-          void this.flushNow();
-        }
-      }
-      return;
-    }
-
-    if (event.type === "tool_execution_start") {
+    if (event.type === "tool_start") {
       this.logger.info(
         {
           toolName: event.toolName,
@@ -88,8 +57,8 @@ export class EventForwarder {
       return;
     }
 
-    if (event.type === "tool_execution_end") {
-      const summary = extractToolResultText(event.result);
+    if (event.type === "tool_end") {
+      const summary = event.output;
       this.logger.info(
         {
           toolName: event.toolName,
@@ -105,13 +74,8 @@ export class EventForwarder {
       return;
     }
 
-    if (event.type === "auto_compaction_start") {
-      this.enqueueSend(`_Compacting context (${event.reason})..._`);
-      return;
-    }
-
-    if (event.type === "auto_retry_start") {
-      this.enqueueSend(`_Retrying (${event.attempt}/${event.maxAttempts})..._`);
+    if (event.type === "status") {
+      this.enqueueSend(`_${event.message}_`);
     }
   };
 
@@ -129,7 +93,7 @@ export class EventForwarder {
     }
   }
 
-  private baseEnvelope(): { platform: "discord"; accountId: string; chatId: string; threadId?: string } {
+  private baseEnvelope(): { platform: Platform; accountId: string; chatId: string; threadId?: string } {
     return {
       platform: this.inbound.platform,
       accountId: this.inbound.accountId,
