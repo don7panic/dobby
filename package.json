@@ -24,9 +24,8 @@
     "@mariozechner/pi-agent-core": "^0.53.0",
     "@mariozechner/pi-ai": "^0.53.0",
     "@mariozechner/pi-coding-agent": "^0.53.0",
-    "discord.js": "^14.22.1",
-    "pino": "^9.5.0",
-    "zod": "^3.23.8"
+    "pino": "^9.6.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

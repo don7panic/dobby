@@ -157,7 +157,15 @@ export class EventForwarder {
           });
         }
       } catch (error) {
-        this.logger.warn({ err: error }, "Failed to send split final response to Discord");
+        this.logger.warn(
+          {
+            err: error,
+            connectorId: this.inbound.connectorId,
+            chatId: this.inbound.chatId,
+            targetMessageId: this.rootMessageId,
+          },
+          "Failed to send split final response to Discord",
+        );
       }
     }
 
@@ -198,7 +206,16 @@ export class EventForwarder {
         text: content,
       });
     } catch (error) {
-      this.logger.warn({ err: error }, "Failed to flush streaming update");
+      this.logger.warn(
+        {
+          err: error,
+          connectorId: this.inbound.connectorId,
+          chatId: this.inbound.chatId,
+          targetMessageId: this.rootMessageId,
+          contentLength: content.length,
+        },
+        "Failed to flush streaming update",
+      );
     }
   }
 
@@ -211,7 +228,15 @@ export class EventForwarder {
         text,
       })
       .catch((error) => {
-        this.logger.warn({ err: error }, "Failed to send threaded tool update");
+        this.logger.warn(
+          {
+            err: error,
+            connectorId: this.inbound.connectorId,
+            chatId: this.inbound.chatId,
+            replyToMessageId: this.rootMessageId,
+          },
+          "Failed to send threaded tool update",
+        );
       });
 
     this.pendingOps.push(promise);

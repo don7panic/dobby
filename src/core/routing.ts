@@ -19,7 +19,7 @@ import type {
 
 const extensionInstanceSchema = z.object({
   contributionId: z.string().min(1),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
 });
 
 const routeProfileSchema = z.object({
@@ -37,8 +37,8 @@ const routeProfileSchema = z.object({
 
 const routingSchema = z.object({
   defaultRouteId: z.string().min(1).optional(),
-  channelMap: z.record(z.record(z.string().min(1))),
-  routes: z.record(routeProfileSchema),
+  channelMap: z.record(z.string(), z.record(z.string(), z.string().min(1))),
+  routes: z.record(z.string(), routeProfileSchema),
 });
 
 const gatewayConfigSchema = z.object({
@@ -54,14 +54,14 @@ const gatewayConfigSchema = z.object({
   }),
   providers: z.object({
     defaultProviderId: z.string().min(1),
-    instances: z.record(extensionInstanceSchema),
+    instances: z.record(z.string(), extensionInstanceSchema),
   }),
   connectors: z.object({
-    instances: z.record(extensionInstanceSchema),
+    instances: z.record(z.string(), extensionInstanceSchema),
   }),
   sandboxes: z.object({
     defaultSandboxId: z.string().min(1).optional(),
-    instances: z.record(extensionInstanceSchema).default({}),
+    instances: z.record(z.string(), extensionInstanceSchema).default({}),
   }),
   routing: routingSchema,
   data: z.object({

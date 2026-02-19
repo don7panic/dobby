@@ -17,7 +17,7 @@ const contributionManifestSchema = z.object({
   id: z.string().min(1),
   kind: z.enum(["provider", "connector", "sandbox"]),
   entry: z.string().min(1),
-  capabilities: z.record(z.unknown()).optional(),
+  capabilities: z.record(z.string(), z.unknown()).optional(),
 });
 
 const manifestSchema = z.object({

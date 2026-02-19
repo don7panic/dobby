@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Built-in Discord connector extension package",
   "main": "./index.js",
+  "dependencies": {
+    "discord.js": "^14.22.1"
+  },
   "peerDependencies": {
     "@im-agent-gateway/plugin-sdk": "^0.1.0"
   }

@@ -1,11 +1,7 @@
-import {
-  AttachmentBuilder,
-  ChannelType,
-  Client,
-  GatewayIntentBits,
-  Partials,
-  type MessageCreateOptions,
-} from "discord.js";
+import { access } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
   ConnectorCapabilities,
   ConnectorContext,
@@ -14,9 +10,23 @@ import type {
   GatewayLogger,
   OutboundEnvelope,
 } from "@im-agent-gateway/plugin-sdk";
+import type { MessageCreateOptions } from "discord.js";
 import { mapDiscordMessage } from "./mapper.js";
 
 const DISCORD_MAX_CONTENT_LENGTH = 2000;
+const require = createRequire(import.meta.url);
+
+type DiscordJsModule = {
+  AttachmentBuilder: typeof import("discord.js").AttachmentBuilder;
+  ChannelType: typeof import("discord.js").ChannelType;
+  Client: typeof import("discord.js").Client;
+  GatewayIntentBits: typeof import("discord.js").GatewayIntentBits;
+  Partials: typeof import("discord.js").Partials;
+};
+
+type DiscordClient = import("discord.js").Client;
+
+let cachedDiscordJsModule: DiscordJsModule | null = null;
 
 export interface DiscordConnectorConfig {
   botTokenEnv: string;
@@ -34,10 +44,108 @@ interface DiscordMessageStore {
 }
 
 interface DiscordTextChannel {
-  type: ChannelType;
+  type: number;
   isTextBased(): boolean;
   send(options: MessageCreateOptions): Promise<{ id: string }>;
   messages: DiscordMessageStore;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function validateDiscordJsModule(value: unknown): DiscordJsModule | null {
+  const loadedModule = asRecord(value);
+  if (!loadedModule) {
+    return null;
+  }
+
+  const moduleRecord = asRecord(loadedModule.default) ?? loadedModule;
+  const attachmentBuilder = moduleRecord.AttachmentBuilder;
+  const channelType = moduleRecord.ChannelType;
+  const client = moduleRecord.Client;
+  const gatewayIntentBits = moduleRecord.GatewayIntentBits;
+  const partials = moduleRecord.Partials;
+
+  if (typeof attachmentBuilder !== "function") {
+    return null;
+  }
+  if (!channelType || typeof channelType !== "object") {
+    return null;
+  }
+  if (typeof client !== "function") {
+    return null;
+  }
+  if (!gatewayIntentBits || typeof gatewayIntentBits !== "object") {
+    return null;
+  }
+  if (!partials || typeof partials !== "object") {
+    return null;
+  }
+
+  return {
+    AttachmentBuilder: attachmentBuilder as DiscordJsModule["AttachmentBuilder"],
+    ChannelType: channelType as DiscordJsModule["ChannelType"],
+    Client: client as DiscordJsModule["Client"],
+    GatewayIntentBits: gatewayIntentBits as DiscordJsModule["GatewayIntentBits"],
+    Partials: partials as DiscordJsModule["Partials"],
+  };
+}
+
+async function pathExists(pathToCheck: string): Promise<boolean> {
+  try {
+    await access(pathToCheck);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadDiscordJsModule(): Promise<DiscordJsModule> {
+  if (cachedDiscordJsModule) {
+    return cachedDiscordJsModule;
+  }
+
+  try {
+    const loaded = validateDiscordJsModule(await import("discord.js"));
+    if (loaded) {
+      cachedDiscordJsModule = loaded;
+      return loaded;
+    }
+  } catch {
+    // Fall through to local plugin node_modules fallback.
+  }
+
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const fallbackResolveBases = [
+    resolve(moduleDir, ".."),
+    resolve(moduleDir, "../../../../plugins/connector-discord"),
+    resolve(process.cwd(), "plugins/connector-discord"),
+  ];
+
+  for (const baseDir of fallbackResolveBases) {
+    if (!(await pathExists(baseDir))) {
+      continue;
+    }
+
+    let resolvedModulePath: string;
+    try {
+      resolvedModulePath = require.resolve("discord.js", { paths: [baseDir] });
+    } catch {
+      continue;
+    }
+
+    const loaded = validateDiscordJsModule(await import(pathToFileURL(resolvedModulePath).href));
+    if (loaded) {
+      cachedDiscordJsModule = loaded;
+      return loaded;
+    }
+  }
+
+  throw new Error("Failed to load discord.js");
 }
 
 function hasMessagingApi(channel: unknown): channel is DiscordTextChannel {
@@ -86,7 +194,8 @@ export class DiscordConnector implements ConnectorPlugin {
     maxTextLength: DISCORD_MAX_CONTENT_LENGTH,
   };
 
-  private client: Client | null = null;
+  private discordModule: DiscordJsModule | null = null;
+  private client: DiscordClient | null = null;
   private ctx: ConnectorContext | null = null;
   private botUserId: string | null = null;
 
@@ -106,15 +215,16 @@ export class DiscordConnector implements ConnectorPlugin {
     }
 
     this.ctx = ctx;
+    this.discordModule = await loadDiscordJsModule();
 
-    this.client = new Client({
+    this.client = new this.discordModule.Client({
       intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages,
+        this.discordModule.GatewayIntentBits.Guilds,
+        this.discordModule.GatewayIntentBits.GuildMessages,
+        this.discordModule.GatewayIntentBits.MessageContent,
+        this.discordModule.GatewayIntentBits.DirectMessages,
       ],
-      partials: [Partials.Channel, Partials.Message],
+      partials: [this.discordModule.Partials.Channel, this.discordModule.Partials.Message],
     });
 
     this.client.once("clientReady", () => {
@@ -162,6 +272,7 @@ export class DiscordConnector implements ConnectorPlugin {
       throw new Error("Discord connector is not started");
     }
 
+    const discordModule = this.getDiscordModule();
     const channel = await this.fetchTextChannel(message.chatId);
     const content = clampDiscordContent(message.text);
     if (content !== message.text) {
@@ -197,8 +308,8 @@ export class DiscordConnector implements ConnectorPlugin {
     if (message.attachments && message.attachments.length > 0) {
       options.files = message.attachments.map((attachment) =>
         attachment.title
-          ? new AttachmentBuilder(attachment.localPath, { name: attachment.title })
-          : new AttachmentBuilder(attachment.localPath),
+          ? new discordModule.AttachmentBuilder(attachment.localPath, { name: attachment.title })
+          : new discordModule.AttachmentBuilder(attachment.localPath),
       );
     }
 
@@ -212,6 +323,14 @@ export class DiscordConnector implements ConnectorPlugin {
     this.client = null;
     this.ctx = null;
     this.botUserId = null;
+    this.discordModule = null;
+  }
+
+  private getDiscordModule(): DiscordJsModule {
+    if (!this.discordModule) {
+      throw new Error("Discord connector is not started");
+    }
+    return this.discordModule;
   }
 
   private async fetchTextChannel(channelId: string): Promise<DiscordTextChannel> {
@@ -226,7 +345,11 @@ export class DiscordConnector implements ConnectorPlugin {
       throw new Error(`Discord channel '${channelId}' is not text-based`);
     }
 
-    if (channel.type === ChannelType.GuildVoice || channel.type === ChannelType.GuildStageVoice) {
+    const discordModule = this.getDiscordModule();
+    if (
+      channel.type === discordModule.ChannelType.GuildVoice
+      || channel.type === discordModule.ChannelType.GuildStageVoice
+    ) {
       throw new Error(`Discord channel '${channelId}' is not text-based`);
     }
 
