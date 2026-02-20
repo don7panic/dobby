@@ -1,254 +1,116 @@
-# 统一扩展系统架构（Breaking v2）
+# 扩展系统架构（V3）
 
-## 1. 背景与目标
-- 将 `provider`、`connector`、`sandbox` 统一为可插拔扩展系统。
-- MVP 内置 `pi-coding-agent`、Discord connector、`host` sandbox（兜底）。
-- `docker/boxlite` 作为外部 sandbox 扩展（本地 npm 包示例为 `@im-agent-gateway/sandbox-core`）。
-- 后续通过本地安装插件接入 Claude/Codex（SDK-first）。
-- 允许 breaking changes，不保留旧配置兼容层。
+## 1. 目标
 
-## 2. 核心设计原则
-- 统一抽象：三类扩展共享同一套 Manifest 与加载流程。
-- 显式治理：仅加载 `extensions.allowList` 中启用的插件包。
-- 实例化配置：`contribution` 与 `instance` 分离，route 只引用实例 ID。
-- 默认简单：全局 default provider/sandbox，route 可覆盖。
-- 可观测优先：启动时输出已加载插件、贡献、实例绑定关系。
+V3 将扩展系统对齐 VSCode extension 使用体验：
 
-## 3. 统一扩展模型（Manifest、Contribution、实例）
-- 扩展种类：`provider | connector | sandbox`。
-- 插件包 Manifest：`im-agent-gateway.manifest.json`。
-- 插件契约通过 `@im-agent-gateway/plugin-sdk` 暴露，插件实现不得直接依赖宿主 `src/*`。
-- `contribution`：插件声明的能力单元（例如 `provider.pi`、`connector.telegram`）。
-- `instance`：运行时实例，绑定一个 `contributionId` 和具体 `config`。
-- route 通过 `providerId`、`sandboxId` 指向实例，connector 路由通过 `connectorId` 分组。
+- 扩展按需下载与安装。
+- 扩展在独立目录管理，不污染宿主依赖树。
+- 启用与安装分离：配置声明启用，扩展目录提供安装事实。
+- 宿主不再提供任何 `plugins/*` 或 `dist/plugins/*` 回退加载。
 
-### Manifest 示例
-```json
-{
-  "apiVersion": "1.0",
-  "name": "my-extension-pack",
-  "version": "0.1.0",
-  "contributions": [
-    {
-      "id": "provider.codex",
-      "kind": "provider",
-      "entry": "./dist/provider-codex.js",
-      "capabilities": {
-        "supportsStreaming": true,
-        "supportsAbort": true,
-        "supportsImages": true
-      }
-    }
-  ]
-}
-```
+## 2. 核心模型
 
-## 4. 配置模型（全新 v2，含示例）
-- 旧顶层 `agent/discord/sandbox` 已移除。
-- 新顶层：`extensions/providers/connectors/sandboxes/routing/data`。
+### 2.1 安装目录
 
-```json
-{
-  "extensions": {
-    "allowList": [
-      { "package": "@im-agent-gateway/provider-pi", "enabled": true },
-      { "package": "@im-agent-gateway/provider-claude", "enabled": true },
-      { "package": "@im-agent-gateway/connector-discord", "enabled": true },
-      { "package": "@im-agent-gateway/sandbox-core", "enabled": true }
-    ]
-  },
-  "providers": {
-    "defaultProviderId": "pi.main",
-    "instances": {
-      "pi.main": {
-        "contributionId": "provider.pi",
-        "config": {
-          "provider": "custom-openai",
-          "model": "kimi-k2.5",
-          "thinkingLevel": "off",
-          "modelsFile": "./models.custom.json"
-        }
-      },
-      "claude.main": {
-        "contributionId": "provider.claude",
-        "config": {
-          "model": "claude-sonnet-4-5",
-          "maxTurns": 20,
-          "sandboxedProcess": true,
-          "requireSandboxSpawn": true,
-          "dangerouslySkipPermissions": true,
-          "settingSources": ["project", "local"],
-          "authMode": "env"
-        }
-      }
-    }
-  },
-  "connectors": {
-    "instances": {
-      "discord.main": {
-        "contributionId": "connector.discord",
-        "config": {
-          "botTokenEnv": "DISCORD_BOT_TOKEN",
-          "allowDirectMessages": true,
-          "allowedGuildIds": []
-        }
-      }
-    }
-  },
-  "sandboxes": {
-    "defaultSandboxId": "host.builtin",
-    "instances": {}
-  },
-  "routing": {
-    "defaultRouteId": "projectA",
-    "channelMap": {
-      "discord.main": {
-        "1468896805679792221": "projectA"
-      }
-    },
-    "routes": {
-      "projectA": {
-        "projectRoot": "/Users/oasis/Documents/fazhi",
-        "tools": "full",
-        "allowMentionsOnly": true,
-        "maxConcurrentTurns": 1,
-        "providerId": "pi.main",
-        "sandboxId": "host.builtin"
-      }
-    }
-  },
-  "data": {
-    "rootDir": "./data",
-    "dedupTtlMs": 604800000
-  }
-}
-```
+- 扩展 store 固定在 `<data.rootDir>/extensions`。
+- 目录结构：
+  - `<data.rootDir>/extensions/package.json`
+  - `<data.rootDir>/extensions/package-lock.json`
+  - `<data.rootDir>/extensions/node_modules/*`
 
-## 5. Provider 插件协议（SDK-first）
-- Provider contribution 必须实现：
-  - `kind: "provider"`
-  - `createInstance({ instanceId, config, host, data })`
-- Provider instance 必须实现：
-  - `createRuntime({ conversationKey, route, inbound, executor })`
-  - 返回统一 `GatewayAgentRuntime`：
-    - `prompt()`
-    - `subscribe()`
-    - `abort()`
-    - `dispose()`
-- 内置 `provider.pi` 将 `pi-coding-agent` 事件映射到 `GatewayAgentEvent`。
-- `provider.claude` 使用 Claude Agent SDK，默认启用 sandboxed process，并通过 `executor.spawn()` 在 route 选定 sandbox 中运行 Claude Code 子进程。
-- `provider.claude` 第一期采用 Claude 内置工具白名单映射 `route.tools`：
-  - `readonly`: `Read/Grep/Glob/LS`
-  - `full`: `Read/Grep/Glob/LS/Edit/Write/Bash`
+### 2.2 配置语义
 
-## 6. Connector 插件协议
-- Connector contribution 必须实现：
-  - `kind: "connector"`
-  - `createInstance({ instanceId, config, host, attachmentsRoot })`
-- Connector instance（`ConnectorPlugin`）必须实现：
-  - `id/platform/name/capabilities`
-  - `start(ctx)`、`send(message)`、`stop()`
-- 入站消息必须携带 `connectorId`，用于路由与去重隔离。
+- `extensions.allowList`：声明哪些包允许加载。
+- `providers/connectors/sandboxes.instances`：绑定 `contributionId + config`。
+- `routing`：路由到实例。
 
-## 7. Sandbox 插件协议
-- Sandbox contribution 必须实现：
-  - `kind: "sandbox"`
-  - `createInstance({ instanceId, config, host })`
-- Sandbox instance 必须返回：
-  - `id`
-  - `executor`（统一 `exec/spawn/close` 协议）
-- route 通过 `sandboxId` 选择 executor；未指定时回退 `sandboxes.defaultSandboxId`。
+新增不变量：
+- allowList 中每个启用包必须能从扩展 store 解析；否则启动 fail-fast。
 
-## 8. 插件加载与生命周期
-- 启动阶段：
-  - 读取并校验配置。
-  - 读取 `allowList` 并加载插件包（内置或外部包）。
-  - 解析 Manifest、加载 contribution entry。
-  - 注册 contribution，实例化 provider/connector/sandbox。
-  - 同时初始化宿主内置 `host` executor（不依赖插件）。
-  - 启动 connectors，Gateway 开始收消息。
-- 运行阶段：
-  - connector 产生 `InboundEnvelope(connectorId, platform, ...)`
-  - route resolver 用 `(connectorId, routeChannelId)` 查 route。
-  - route 选 provider + sandbox，创建或复用 runtime。
-  - runtimeRegistry 串行执行会话消息。
-- 关闭阶段：
-  - connector.stop()
-  - runtimeRegistry.closeAll()
-  - provider close（可选）
-  - sandbox executor.close()
+### 2.3 Manifest 约束
 
-## 9. 插件开发与安装流程（本地安装优先）
-- 开发者实现插件包并产出构建文件。
-- 在 gateway 项目执行：
-  - `npm install ../your-plugin`
-  - 或 `npm install file:../your-plugin`
-- 修改 `config/gateway.json`：
-  - `extensions.allowList` 加入包名。
-  - 在 `providers/connectors/sandboxes.instances` 新增实例。
-  - route 绑定 `providerId` / `sandboxId`。
-- 重启进程生效（不支持热重载）。
+- 扩展包必须包含 `im-agent-gateway.manifest.json`。
+- `contributions[*].entry` 必须是插件包内构建好的 JS 入口（`.js/.mjs/.cjs`）。
+- entry 必须位于插件包根目录内部（禁止越界路径）。
+- 仓库里的 `plugins/*` 仅作源码参考，宿主不会回退加载这些源码路径。
 
-当前仓库提供本地包化样例：
-- `/Users/oasis/workspace/im-agent-gateway/plugins/provider-pi`
-- `/Users/oasis/workspace/im-agent-gateway/plugins/provider-claude`
-- `/Users/oasis/workspace/im-agent-gateway/plugins/connector-discord`
-- `/Users/oasis/workspace/im-agent-gateway/plugins/sandbox-core`
+## 3. 宿主职责边界
 
-## 10. 安全与治理（白名单 + 能力闸门）
-- 白名单：未列入 `allowList` 的包不会被加载。
-- 宿主进程默认同进程加载扩展；provider 可通过 `executor.spawn()` 将实际模型子进程放入 sandbox。
-- sandbox 边界由具体 executor 保证（例如 docker hostWorkspaceRoot 限制）。
-- `provider.claude` sandboxed 模式下，Claude 执行与工具调用在 sandbox 内运行，并受 route/projectRoot 与 sandbox 配置共同约束。
+宿主仅负责：
 
-## 11. 错误处理与可观测性
-- 启动失败场景：
-  - Manifest 不合法
-  - contribution kind 与导出不匹配
-  - instance 引用不存在的 contribution
-  - route 引用不存在 provider/sandbox
-- 运行时失败策略：
-  - 主流程异常回写 `Error: ...` 到占位消息
-  - tool/streaming 发送失败仅 warning，不崩溃进程
-- 关键日志：
-  - 已加载插件包、版本、contributions
-  - route/provider/sandbox 绑定
-  - tool start/end、abort、connector send failure
+- 读取配置
+- 从扩展 store 解析 allowList 包
+- 解析 manifest 并动态 import entry
+- 注册 contribution 并实例化 provider/connector/sandbox
+- 运行 gateway 主流程
 
-## 12. 测试与验收标准
-- 配置校验：
-  - 缺失 `contributionId`
-  - instance 指向不存在 contribution
-  - route 指向不存在 provider/sandbox
-- 加载治理：
-  - 非 allowList 包拒绝加载
-  - `apiVersion` 不匹配时启动失败
-- 功能冒烟：
-  - `pi + discord + host.builtin` 可启动
-  - 安装并启用 `sandbox-core` 后 `docker/boxlite` 可按 route 使用
-  - `_Thinking..._` 与流式更新正常
-  - `stop` 可中断当前会话
-- 扩展验证：
-  - 本地安装 provider 插件后可按 route 切换
-  - 新 connector 插件可并存且路由不冲突
-  - 新 sandbox 插件支持 route 级覆盖
-- 最小检查命令：
-  - `npm run check`
-  - `npm run build`
+宿主不负责：
 
-## 13. Breaking Changes 清单
-- 删除旧顶层配置：`agent`、`discord`、`sandbox`。
-- `routing.channelMap` 改为：`connectorId -> channelId -> routeId`。
-- `Platform` 由固定 `"discord"` 改为扩展字符串。
-- `SessionFactory` 不再是唯一 provider 入口，替换为 provider instance/runtime。
-- `event-forwarder` 不再绑定 `pi-coding-agent` 原始事件类型。
-- `InboundEnvelope` 新增 `connectorId`，用于跨 connector 隔离。
+- 插件源码热加载
+- 插件开发态 fallback
+- 自动改写用户配置
 
-## 14. 默认值与假设
-- 插件来源：先支持本地安装验证，不支持 remote package 市场。
-- 信任模型：显式 allowList。
-- 隔离模型：同进程扩展 + 可选 provider sandboxed process（通过 `executor.spawn()`）。
-- Provider 策略：SDK-first（Claude/Codex 目标适配策略）。
-- Sandbox 策略：全局默认 + route 覆盖。
-- 生效策略：重启生效，不支持热加载。
-- `maxConcurrentTurns` 字段保留，当前不启用并发上限调度。
+## 4. CLI 设计
+
+在 `src/main.ts` 提供子命令：
+
+- `extension install <packageSpec> --config <path>`
+  - 执行：`npm install --prefix <extensionsDir> --save-exact <packageSpec>`
+  - 输出：已安装包、contributions、可粘贴配置模板（allowList + instances）
+- `extension uninstall <packageName> --config <path>`
+  - 执行：`npm uninstall --prefix <extensionsDir> <packageName>`
+- `extension list --config <path>`
+  - 列出扩展 store 中已安装包及其 contributions
+
+`start` 命令（默认）维持网关启动逻辑。
+
+## 5. 加载流程
+
+1. 读取 `gateway.json` 并归一化 `data.rootDir`。
+2. 计算 `extensionsDir = <data.rootDir>/extensions`。
+3. 使用 `createRequire(<extensionsDir>/package.json)` 解析 allowList 包。
+4. 读取并校验 manifest。
+5. 动态加载 contribution entry。
+6. 进行 contribution kind 一致性校验。
+7. 注册并实例化所需实例。
+
+## 6. 错误策略
+
+### 6.1 缺包
+
+当 allowList 包无法解析时，直接启动失败，并输出明确命令：
+
+`im-agent-gateway extension install <package> --config <abs-config-path>`
+
+### 6.2 非法 manifest / entry
+
+以下情况直接启动失败：
+
+- manifest 不存在或结构非法
+- entry 非 JS 文件
+- entry 指向包外路径
+- entry 文件不存在
+- contribution kind 与模块导出不一致
+
+## 7. 插件包契约（发布侧）
+
+- 第三方依赖放在插件自身 `dependencies`。
+- `@im-agent-gateway/plugin-sdk` 作为插件契约依赖（通常 `peerDependencies`）。
+- 开发态可通过 `devDependencies` 使用 `file:../plugin-sdk`，保证本地类型可用；运行态不依赖宿主回退。
+- 插件运行时不得依赖宿主源码路径或宿主 dist 路径。
+
+## 8. Breaking 变更总结
+
+- 宿主 `package.json` 不再使用 `file:plugins/*` 依赖。
+- 宿主编译边界收敛到 `src/**/*.ts`。
+- 插件入口不再 `try src / catch dist`。
+- manifest entry 改为包内 dist JS。
+
+## 9. 验收基线
+
+1. allowList 缺包时，启动 fail-fast，报错含 install 命令。
+2. 安装扩展后启动成功，日志可见已加载包和 contributions。
+3. 根 `node_modules` 中存在同名包时，loader 不回退解析（只认扩展 store）。
+4. `extension install` 输出模板可直接用于 `gateway.json`。
+5. `npm run check` 与 `npm run build` 通过。

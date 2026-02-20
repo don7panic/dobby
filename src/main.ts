@@ -7,15 +7,18 @@ import { loadGatewayConfig, RouteResolver } from "./core/routing.js";
 import { RuntimeRegistry } from "./core/runtime-registry.js";
 import { BUILTIN_HOST_SANDBOX_ID } from "./core/types.js";
 import type {
+  ConnectorsConfig,
+  ExtensionContributionManifest,
   ExtensionHostContext,
   GatewayConfig,
   GatewayLogger,
-  ProviderInstance,
   ProvidersConfig,
+  ProviderInstance,
   SandboxInstance,
   SandboxesConfig,
 } from "./core/types.js";
 import { ExtensionLoader } from "./extension/loader.js";
+import { ExtensionStoreManager } from "./extension/manager.js";
 import { ExtensionRegistry } from "./extension/registry.js";
 import type { Executor } from "./sandbox/executor.js";
 import { HostExecutor } from "./sandbox/host-executor.js";
@@ -31,12 +34,72 @@ function parseConfigPath(argv: string[]): string {
   return resolve(process.cwd(), "config", "gateway.json");
 }
 
+function parsePositionalArg(argv: string[], index: number): string | undefined {
+  const positionals: string[] = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const current = argv[i] ?? "";
+    if (current === "--config") {
+      i += 1;
+      continue;
+    }
+    if (current.startsWith("--")) {
+      continue;
+    }
+    positionals.push(current);
+  }
+
+  return positionals[index];
+}
+
+function extensionStoreDir(config: GatewayConfig): string {
+  return join(config.data.rootDir, "extensions");
+}
+
+function instanceTemplateId(contributionId: string): string {
+  const segments = contributionId.split(".");
+  const suffix = segments.length > 1 ? segments.slice(1).join("-") : contributionId;
+  return `${suffix}.main`;
+}
+
+function buildInstanceTemplates(contributions: ExtensionContributionManifest[]): {
+  providers: ConnectorsConfig["instances"];
+  connectors: ConnectorsConfig["instances"];
+  sandboxes: ConnectorsConfig["instances"];
+} {
+  const providers: ConnectorsConfig["instances"] = {};
+  const connectors: ConnectorsConfig["instances"] = {};
+  const sandboxes: ConnectorsConfig["instances"] = {};
+
+  for (const contribution of contributions) {
+    const instanceId = instanceTemplateId(contribution.id);
+    const payload = {
+      contributionId: contribution.id,
+      config: {},
+    };
+
+    if (contribution.kind === "provider") {
+      providers[instanceId] = payload;
+      continue;
+    }
+
+    if (contribution.kind === "connector") {
+      connectors[instanceId] = payload;
+      continue;
+    }
+
+    sandboxes[instanceId] = payload;
+  }
+
+  return { providers, connectors, sandboxes };
+}
+
 async function ensureDataDirs(rootDir: string): Promise<void> {
   await mkdir(rootDir, { recursive: true });
   await mkdir(join(rootDir, "sessions"), { recursive: true });
   await mkdir(join(rootDir, "attachments"), { recursive: true });
   await mkdir(join(rootDir, "logs"), { recursive: true });
   await mkdir(join(rootDir, "state"), { recursive: true });
+  await mkdir(join(rootDir, "extensions"), { recursive: true });
 }
 
 async function closeProviderInstances(providers: Map<string, ProviderInstance>, logger: GatewayLogger): Promise<void> {
@@ -108,8 +171,8 @@ function selectSandboxInstances(config: GatewayConfig): SandboxesConfig {
   };
 }
 
-async function main(): Promise<void> {
-  const configPath = parseConfigPath(process.argv.slice(2));
+async function runGateway(startArgs: string[]): Promise<void> {
+  const configPath = parseConfigPath(startArgs);
   const config = await loadGatewayConfig(configPath);
 
   await ensureDataDirs(config.data.rootDir);
@@ -119,13 +182,17 @@ async function main(): Promise<void> {
     level: process.env.LOG_LEVEL ?? "info",
   });
 
-  const loader = new ExtensionLoader(logger);
+  const loader = new ExtensionLoader(logger, {
+    extensionsDir: extensionStoreDir(config),
+    configPath,
+  });
   const loadedPackages = await loader.loadAllowList(config.extensions.allowList);
   const registry = new ExtensionRegistry();
   registry.registerPackages(loadedPackages);
 
   logger.info(
     {
+      extensionStoreDir: extensionStoreDir(config),
       packages: loadedPackages.map((pkg) => ({
         package: pkg.packageName,
         manifestName: pkg.manifest.name,
@@ -191,6 +258,107 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => {
     void shutdown("SIGTERM");
   });
+}
+
+async function runExtensionCommand(args: string[]): Promise<void> {
+  const subcommand = args[0];
+  if (!subcommand || !["install", "uninstall", "list"].includes(subcommand)) {
+    throw new Error("Usage: extension <install|uninstall|list> [package] --config <path>");
+  }
+
+  const configPath = parseConfigPath(args.slice(1));
+  const config = await loadGatewayConfig(configPath);
+  const logger = pino({
+    name: "im-agent-gateway",
+    level: process.env.LOG_LEVEL ?? "info",
+  });
+  const manager = new ExtensionStoreManager(logger, extensionStoreDir(config));
+
+  if (subcommand === "install") {
+    const packageSpec = parsePositionalArg(args.slice(1), 0);
+    if (!packageSpec) {
+      throw new Error("Usage: extension install <packageSpec> --config <path>");
+    }
+
+    const installed = await manager.install(packageSpec);
+    const templates = buildInstanceTemplates(installed.manifest.contributions);
+    const allowListTemplate = {
+      package: installed.packageName,
+      enabled: true,
+    };
+
+    console.log(`Installed ${installed.packageName}@${installed.version}`);
+    console.log("Contributions:");
+    for (const contribution of installed.manifest.contributions) {
+      console.log(`- ${contribution.kind}:${contribution.id} (${contribution.entry})`);
+    }
+
+    console.log("");
+    console.log("allowList template:");
+    console.log(JSON.stringify(allowListTemplate, null, 2));
+
+    console.log("");
+    console.log("instances template:");
+    console.log(
+      JSON.stringify(
+        {
+          providers: { instances: templates.providers },
+          connectors: { instances: templates.connectors },
+          sandboxes: { instances: templates.sandboxes },
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  if (subcommand === "uninstall") {
+    const packageName = parsePositionalArg(args.slice(1), 0);
+    if (!packageName) {
+      throw new Error("Usage: extension uninstall <packageName> --config <path>");
+    }
+
+    await manager.uninstall(packageName);
+    console.log(`Uninstalled ${packageName}`);
+    console.log("Remember to remove this package from extensions.allowList and related instance references.");
+    return;
+  }
+
+  const listed = await manager.listInstalled();
+  if (listed.length === 0) {
+    console.log(`No extensions installed in ${extensionStoreDir(config)}`);
+    return;
+  }
+
+  console.log(`Extensions in ${extensionStoreDir(config)}:`);
+  for (const item of listed) {
+    if (item.error) {
+      console.log(`- ${item.packageName}@${item.version} (invalid: ${item.error})`);
+      continue;
+    }
+
+    const contributions = item.manifest?.contributions ?? [];
+    console.log(`- ${item.packageName}@${item.version}`);
+    for (const contribution of contributions) {
+      console.log(`  * ${contribution.kind}:${contribution.id} (${contribution.entry})`);
+    }
+  }
+}
+
+async function main(): Promise<void> {
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs[0] === "extension") {
+    await runExtensionCommand(rawArgs.slice(1));
+    return;
+  }
+
+  if (rawArgs[0] === "start") {
+    await runGateway(rawArgs.slice(1));
+    return;
+  }
+
+  await runGateway(rawArgs);
 }
 
 void main().catch((error) => {

@@ -6,7 +6,7 @@
     {
       "id": "provider.pi",
       "kind": "provider",
-      "entry": "./index.js",
+      "entry": "./dist/contribution.js",
       "capabilities": {
         "supportsStreaming": true,
         "supportsAbort": true,

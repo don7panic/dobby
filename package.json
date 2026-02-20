@@ -13,17 +13,13 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/main.js",
     "start:local": "node --env-file-if-exists=.env dist/src/main.js",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "plugins:install": "npm install --prefix plugins/plugin-sdk && npm install --prefix plugins/connector-discord && npm install --prefix plugins/provider-pi && npm install --prefix plugins/provider-claude && npm install --prefix plugins/sandbox-core",
+    "plugins:check": "npm run check --prefix plugins/connector-discord && npm run check --prefix plugins/provider-pi && npm run check --prefix plugins/provider-claude && npm run check --prefix plugins/sandbox-core",
+    "plugins:build": "npm run build --prefix plugins/connector-discord && npm run build --prefix plugins/provider-pi && npm run build --prefix plugins/provider-claude && npm run build --prefix plugins/sandbox-core"
   },
   "dependencies": {
-    "@im-agent-gateway/connector-discord": "file:plugins/connector-discord",
-    "@im-agent-gateway/plugin-sdk": "file:plugins/plugin-sdk",
-    "@im-agent-gateway/provider-claude": "file:plugins/provider-claude",
-    "@im-agent-gateway/provider-pi": "file:plugins/provider-pi",
-    "@im-agent-gateway/sandbox-core": "file:plugins/sandbox-core",
-    "@mariozechner/pi-agent-core": "^0.53.0",
     "@mariozechner/pi-ai": "^0.53.0",
-    "@mariozechner/pi-coding-agent": "^0.53.0",
     "pino": "^9.6.0",
     "zod": "^4.3.6"
   },

@@ -6,7 +6,7 @@
     {
       "id": "connector.discord",
       "kind": "connector",
-      "entry": "./index.js",
+      "entry": "./dist/contribution.js",
       "capabilities": {
         "supportsEdit": true,
         "supportsThread": true,

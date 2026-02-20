@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import type {
@@ -274,15 +273,6 @@ function parseSdkSpawnOptions(value: unknown, fallbackCwd: string): ParsedSdkSpa
   return { command, args, cwd, env, signal };
 }
 
-async function pathExists(absolutePath: string): Promise<boolean> {
-  try {
-    await access(absolutePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function loadClaudeSdkModule(): Promise<ClaudeSdkModule> {
   if (cachedSdkModule) {
     return cachedSdkModule;
@@ -302,33 +292,10 @@ async function loadClaudeSdkModule(): Promise<ClaudeSdkModule> {
     };
   };
 
-  try {
-    const loaded = validate(await import("@anthropic-ai/claude-agent-sdk"));
-    if (loaded) {
-      cachedSdkModule = loaded;
-      return loaded;
-    }
-  } catch {
-    // Fall through to local plugin node_modules fallback.
-  }
-
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-  const fallbackPaths = [
-    resolve(moduleDir, "../node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs"),
-    resolve(moduleDir, "../../../plugins/provider-claude/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs"),
-    resolve(process.cwd(), "plugins/provider-claude/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs"),
-  ];
-
-  for (const candidate of fallbackPaths) {
-    if (!(await pathExists(candidate))) {
-      continue;
-    }
-
-    const fallbackModule = validate(await import(pathToFileURL(candidate).href));
-    if (fallbackModule) {
-      cachedSdkModule = fallbackModule;
-      return fallbackModule;
-    }
+  const loaded = validate(await import("@anthropic-ai/claude-agent-sdk"));
+  if (loaded) {
+    cachedSdkModule = loaded;
+    return loaded;
   }
 
   throw new Error("Failed to load @anthropic-ai/claude-agent-sdk");

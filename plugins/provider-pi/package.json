@@ -5,7 +5,27 @@
   "type": "module",
   "description": "Built-in pi provider extension package",
   "main": "./index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mariozechner/pi-agent-core": "^0.53.0",
+    "@mariozechner/pi-ai": "^0.53.0",
+    "@mariozechner/pi-coding-agent": "^0.53.0",
+    "zod": "^4.3.6"
+  },
   "peerDependencies": {
     "@im-agent-gateway/plugin-sdk": "^0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@im-agent-gateway/plugin-sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@im-agent-gateway/plugin-sdk": "file:../plugin-sdk",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.9.2"
   }
 }

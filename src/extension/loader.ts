@@ -1,8 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { z } from "zod";
 import type {
   ExtensionContributionManifest,
   ExtensionContributionModule,
@@ -10,22 +9,7 @@ import type {
   ExtensionPackageConfig,
   GatewayLogger,
 } from "../core/types.js";
-
-const require = createRequire(import.meta.url);
-
-const contributionManifestSchema = z.object({
-  id: z.string().min(1),
-  kind: z.enum(["provider", "connector", "sandbox"]),
-  entry: z.string().min(1),
-  capabilities: z.record(z.string(), z.unknown()).optional(),
-});
-
-const manifestSchema = z.object({
-  apiVersion: z.string().min(1),
-  name: z.string().min(1),
-  version: z.string().min(1),
-  contributions: z.array(contributionManifestSchema).min(1),
-});
+import { readExtensionManifest } from "./manifest.js";
 
 export interface LoadedExtensionContribution {
   manifest: ExtensionContributionManifest;
@@ -36,6 +20,30 @@ export interface LoadedExtensionPackage {
   packageName: string;
   manifest: ExtensionManifest;
   contributions: LoadedExtensionContribution[];
+}
+
+interface ExtensionLoaderOptions {
+  extensionsDir: string;
+  configPath: string;
+}
+
+function isJavaScriptEntry(entry: string): boolean {
+  return entry.endsWith(".js") || entry.endsWith(".mjs") || entry.endsWith(".cjs");
+}
+
+function assertWithinRoot(pathToCheck: string, rootDir: string): void {
+  const normalizedRoot = resolve(rootDir);
+  const normalizedPath = resolve(pathToCheck);
+  if (normalizedPath === normalizedRoot) {
+    return;
+  }
+
+  const rootPrefix = normalizedRoot.endsWith("/") || normalizedRoot.endsWith("\\")
+    ? normalizedRoot
+    : `${normalizedRoot}${process.platform === "win32" ? "\\" : "/"}`;
+  if (!normalizedPath.startsWith(rootPrefix)) {
+    throw new Error(`Path '${normalizedPath}' escapes package root '${normalizedRoot}'`);
+  }
 }
 
 function pickContributionModule(loadedModule: Record<string, unknown>): unknown {
@@ -49,7 +57,14 @@ function pickContributionModule(loadedModule: Record<string, unknown>): unknown 
 }
 
 export class ExtensionLoader {
-  constructor(private readonly logger: GatewayLogger) {}
+  private readonly extensionRequire: NodeJS.Require;
+
+  constructor(
+    private readonly logger: GatewayLogger,
+    private readonly options: ExtensionLoaderOptions,
+  ) {
+    this.extensionRequire = createRequire(join(this.options.extensionsDir, "package.json"));
+  }
 
   async loadAllowList(allowList: ExtensionPackageConfig[]): Promise<LoadedExtensionPackage[]> {
     const loaded: LoadedExtensionPackage[] = [];
@@ -69,20 +84,37 @@ export class ExtensionLoader {
   private async loadExternalPackage(packageName: string): Promise<LoadedExtensionPackage> {
     let packageJsonPath: string;
     try {
-      packageJsonPath = require.resolve(`${packageName}/package.json`);
+      packageJsonPath = this.extensionRequire.resolve(`${packageName}/package.json`);
     } catch (error) {
-      throw new Error(`Failed to resolve extension package '${packageName}': ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Extension package '${packageName}' is not installed in '${this.options.extensionsDir}'. ` +
+        `Install it with: im-agent-gateway extension install ${packageName} --config ${this.options.configPath}. ` +
+        `Resolver error: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     const packageRoot = dirname(packageJsonPath);
     const manifestPath = resolve(join(packageRoot, "im-agent-gateway.manifest.json"));
-
-    const manifestRaw = await readFile(manifestPath, "utf-8");
-    const manifest = manifestSchema.parse(JSON.parse(manifestRaw)) as ExtensionManifest;
+    const manifest = await readExtensionManifest(manifestPath);
 
     const contributions: LoadedExtensionContribution[] = [];
     for (const contributionManifest of manifest.contributions) {
+      if (!isJavaScriptEntry(contributionManifest.entry)) {
+        throw new Error(
+          `Contribution '${contributionManifest.id}' in package '${packageName}' must use a built JavaScript entry, got '${contributionManifest.entry}'`,
+        );
+      }
+
       const entryPath = resolve(packageRoot, contributionManifest.entry);
+      assertWithinRoot(entryPath, packageRoot);
+      try {
+        await access(entryPath);
+      } catch {
+        throw new Error(
+          `Contribution '${contributionManifest.id}' in package '${packageName}' points to missing entry '${contributionManifest.entry}'`,
+        );
+      }
+
       const loadedModule = (await import(pathToFileURL(entryPath).href)) as Record<string, unknown>;
       const contributionModule = pickContributionModule(loadedModule);
 

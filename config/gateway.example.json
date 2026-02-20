@@ -6,15 +6,7 @@
         "enabled": true
       },
       {
-        "package": "@im-agent-gateway/provider-claude",
-        "enabled": true
-      },
-      {
         "package": "@im-agent-gateway/connector-discord",
-        "enabled": true
-      },
-      {
-        "package": "@im-agent-gateway/sandbox-core",
         "enabled": true
       }
     ]
@@ -29,21 +21,6 @@
           "model": "example-model",
           "thinkingLevel": "off",
           "modelsFile": "./models.custom.json"
-        }
-      },
-      "claude.main": {
-        "contributionId": "provider.claude",
-        "config": {
-          "model": "claude-sonnet-4-5",
-          "maxTurns": 20,
-          "sandboxedProcess": true,
-          "requireSandboxSpawn": true,
-          "dangerouslySkipPermissions": true,
-          "settingSources": [
-            "project",
-            "local"
-          ],
-          "authMode": "env"
         }
       }
     }
@@ -62,34 +39,13 @@
   },
   "sandboxes": {
     "defaultSandboxId": "host.builtin",
-    "instances": {
-      "docker.main": {
-        "contributionId": "sandbox.docker",
-        "config": {
-          "container": "im-agent-sandbox",
-          "hostWorkspaceRoot": "/Users/you/workspace",
-          "containerWorkspaceRoot": "/workspace"
-        }
-      },
-      "boxlite.main": {
-        "contributionId": "sandbox.boxlite",
-        "config": {
-          "workspaceRoot": "/Users/you/workspace",
-          "image": "gendosu/claude-code-docker:latest",
-          "containerWorkspaceRoot": "/workspace",
-          "reuseMode": "conversation",
-          "autoRemove": true,
-          "securityProfile": "maximum"
-        }
-      }
-    }
+    "instances": {}
   },
   "routing": {
     "defaultRouteId": "projectA",
     "channelMap": {
       "discord.main": {
-        "YOUR_DISCORD_CHANNEL_ID_A": "projectA",
-        "YOUR_DISCORD_CHANNEL_ID_B": "projectB"
+        "YOUR_DISCORD_CHANNEL_ID_A": "projectA"
       }
     },
     "routes": {
@@ -101,15 +57,6 @@
         "maxConcurrentTurns": 1,
         "providerId": "pi.main",
         "sandboxId": "host.builtin"
-      },
-      "projectB": {
-        "projectRoot": "/Users/you/workspace/project-b",
-        "tools": "full",
-        "systemPromptFile": "",
-        "allowMentionsOnly": true,
-        "maxConcurrentTurns": 1,
-        "providerId": "pi.main",
-        "sandboxId": "docker.main"
       }
     }
   },

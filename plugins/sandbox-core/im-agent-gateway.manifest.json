@@ -6,12 +6,12 @@
     {
       "id": "sandbox.docker",
       "kind": "sandbox",
-      "entry": "./docker.js"
+      "entry": "./dist/docker-contribution.js"
     },
     {
       "id": "sandbox.boxlite",
       "kind": "sandbox",
-      "entry": "./boxlite.js"
+      "entry": "./dist/boxlite-contribution.js"
     }
   ]
 }
