@@ -138,7 +138,31 @@ export class DockerExecutor implements Executor {
       throw new Error("Docker executor failed to create stdio pipes for spawned process");
     }
 
-    return child as unknown as SpawnedProcess;
+    const spawned: SpawnedProcess = {
+      stdin: child.stdin,
+      stdout: child.stdout,
+      stderr: child.stderr,
+      get killed() {
+        return child.killed;
+      },
+      get exitCode() {
+        return child.exitCode;
+      },
+      kill(signal = "SIGKILL") {
+        return child.kill(signal);
+      },
+      on(event, listener) {
+        child.on(event, listener as (...args: unknown[]) => void);
+      },
+      once(event, listener) {
+        child.once(event, listener as (...args: unknown[]) => void);
+      },
+      off(event, listener) {
+        child.off(event, listener as (...args: unknown[]) => void);
+      },
+    };
+
+    return spawned;
   }
 
   async close(): Promise<void> {

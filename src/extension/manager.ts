@@ -72,11 +72,36 @@ function parsePackageNameFromSpec(packageSpec: string): string | null {
   return unscopedMatch?.[1] ?? null;
 }
 
-function pickInstalledPackageName(
+async function parsePackageNameFromLocalSpec(packageSpec: string): Promise<string | null> {
+  const trimmed = packageSpec.trim();
+  if (!trimmed) return null;
+
+  let localPath: string | null = null;
+  if (trimmed.startsWith("file:")) {
+    localPath = trimmed.slice("file:".length);
+  } else if (trimmed.startsWith("./") || trimmed.startsWith("../") || trimmed.startsWith("/")) {
+    localPath = trimmed;
+  }
+
+  if (!localPath) {
+    return null;
+  }
+
+  const packageJsonPath = resolve(process.cwd(), localPath, "package.json");
+  try {
+    const raw = await readFile(packageJsonPath, "utf-8");
+    const parsed = JSON.parse(raw) as { name?: unknown };
+    return typeof parsed.name === "string" && parsed.name.length > 0 ? parsed.name : null;
+  } catch {
+    return null;
+  }
+}
+
+async function pickInstalledPackageName(
   packageSpec: string,
   beforeDeps: Record<string, string>,
   afterDeps: Record<string, string>,
-): string {
+): Promise<string> {
   const changedPackages = Object.entries(afterDeps)
     .filter(([name, version]) => beforeDeps[name] !== version)
     .map(([name]) => name);
@@ -88,6 +113,11 @@ function pickInstalledPackageName(
   const inferred = parsePackageNameFromSpec(packageSpec);
   if (inferred && afterDeps[inferred]) {
     return inferred;
+  }
+
+  const localInferred = await parsePackageNameFromLocalSpec(packageSpec);
+  if (localInferred && afterDeps[localInferred]) {
+    return localInferred;
   }
 
   if (changedPackages.length > 0) {
@@ -128,7 +158,7 @@ export class ExtensionStoreManager {
     await this.runNpm(["install", "--prefix", this.extensionsDir, "--save-exact", packageSpec]);
 
     const afterDeps = await this.readDependencies();
-    const packageName = pickInstalledPackageName(packageSpec, beforeDeps, afterDeps);
+    const packageName = await pickInstalledPackageName(packageSpec, beforeDeps, afterDeps);
     const version = afterDeps[packageName];
     if (!version) {
       throw new Error(`Package '${packageName}' is not present in extension store after installation`);

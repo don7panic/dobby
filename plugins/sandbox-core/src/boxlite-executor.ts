@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { resolve, sep } from "node:path";
 import { PassThrough, Writable } from "node:stream";
+import type { SecurityOptions, SimpleBoxOptions } from "@boxlite-ai/boxlite";
 import type { GatewayLogger } from "@im-agent-gateway/plugin-sdk";
 import { BOXLITE_CONTEXT_CONVERSATION_KEY_ENV, BOXLITE_CONTEXT_PROJECT_ROOT_ENV } from "./boxlite-context.js";
 import type { ExecOptions, ExecResult, Executor, SpawnOptions, SpawnedProcess } from "@im-agent-gateway/plugin-sdk";
@@ -21,25 +22,51 @@ interface BoxEntry {
   key: string;
   name: string;
   projectRoot: string;
-  box: {
-    exec: (
-      command: string,
-      args?: string[],
-      env?: Array<[string, string]>,
-      tty?: boolean,
-    ) => Promise<{
-      stdin?: () => Promise<{ write: (chunk: string | Buffer) => Promise<void>; close?: () => Promise<void>; end?: () => Promise<void> }>;
-      stdout: () => Promise<{ next: () => Promise<string | null> }>;
-      stderr: () => Promise<{ next: () => Promise<string | null> }>;
-      wait: () => Promise<{ exitCode: number; errorMessage?: string | null }>;
-    }>;
-    stop: () => Promise<void>;
-  };
+  box: BoxHandle;
+}
+
+interface BoxExecutionReader {
+  next: () => Promise<string | null>;
+}
+
+interface BoxExecutionStdin {
+  write: (chunk: string | Buffer) => Promise<void>;
+  close?: () => Promise<void>;
+  end?: () => Promise<void>;
+}
+
+interface BoxExecutionHandle {
+  stdin?: () => Promise<BoxExecutionStdin>;
+  stdout: () => Promise<BoxExecutionReader>;
+  stderr: () => Promise<BoxExecutionReader>;
+  wait: () => Promise<{ exitCode: number; errorMessage?: string | null }>;
+}
+
+interface BoxHandle {
+  exec: (
+    command: string,
+    args?: string[],
+    env?: Array<[string, string]>,
+    tty?: boolean,
+  ) => Promise<BoxExecutionHandle>;
+  stop: () => Promise<void>;
+}
+
+type BoxliteVolume = NonNullable<SimpleBoxOptions["volumes"]>[number];
+
+interface BoxRuntimeCreateOptions {
+  image: string;
+  autoRemove: boolean;
+  workingDir: string;
+  volumes: BoxliteVolume[];
+  security: SecurityOptions;
+  cpus?: number;
+  memoryMib?: number;
 }
 
 interface NativeRuntime {
-  create?: (options: unknown, name?: string) => Promise<unknown>;
-  getOrCreate?: (options: unknown, name?: string) => Promise<unknown>;
+  create?: (options: BoxRuntimeCreateOptions, name?: string) => Promise<unknown>;
+  getOrCreate?: (options: BoxRuntimeCreateOptions, name?: string) => Promise<unknown>;
   remove?: (idOrName: string, force?: boolean) => Promise<void>;
   shutdown?: (timeoutSeconds?: number) => Promise<void>;
   close?: () => void;
@@ -93,13 +120,7 @@ function formatBoxliteInitError(error: unknown): string {
   ].join("\n");
 }
 
-function mapSecurityProfile(profile: BoxliteConfig["securityProfile"]): {
-  jailerEnabled: boolean;
-  seccompEnabled: boolean;
-  maxOpenFiles?: number;
-  maxFileSize?: number;
-  maxProcesses?: number;
-} {
+function mapSecurityProfile(profile: BoxliteConfig["securityProfile"]): SecurityOptions {
   if (profile === "development") {
     return {
       jailerEnabled: false,
@@ -121,6 +142,32 @@ function mapSecurityProfile(profile: BoxliteConfig["securityProfile"]): {
     maxFileSize: 1024 * 1024 * 1024,
     maxProcesses: 100,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function isBoxHandle(value: unknown): value is BoxHandle {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return typeof value.exec === "function" && typeof value.stop === "function";
+}
+
+function isNativeRuntime(value: unknown): value is NativeRuntime {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.create === "function"
+    || typeof value.getOrCreate === "function"
+    || typeof value.remove === "function"
+    || typeof value.shutdown === "function"
+    || typeof value.close === "function"
+  );
 }
 
 export class BoxliteExecutor implements Executor {
@@ -268,13 +315,7 @@ export class BoxliteExecutor implements Executor {
     let resolvedBox: BoxEntry | null = null;
 
     const stdinQueue: Buffer[] = [];
-    let stdinWriter:
-      | {
-          write: (chunk: string | Buffer) => Promise<void>;
-          close?: () => Promise<void>;
-          end?: () => Promise<void>;
-        }
-      | null = null;
+    let stdinWriter: BoxExecutionStdin | null = null;
     let stdinClosed = false;
 
     const emitExit = (code: number | null, signal: NodeJS.Signals | null) => {
@@ -388,7 +429,7 @@ export class BoxliteExecutor implements Executor {
       },
     };
 
-    const pump = async (reader: { next: () => Promise<string | null> }, target: PassThrough): Promise<void> => {
+    const pump = async (reader: BoxExecutionReader, target: PassThrough): Promise<void> => {
       while (!killed && !exited) {
         const chunk = await reader.next();
         if (chunk === null) break;
@@ -561,7 +602,7 @@ export class BoxliteExecutor implements Executor {
     // was created from a previous image/version. Proactively remove same-name stale box
     // so creation is deterministic for current config.
     await this.removeStaleNamedBox(name);
-    const boxOptions: Record<string, unknown> = {
+    const boxOptions: BoxRuntimeCreateOptions = {
       image: this.config.image,
       autoRemove: this.config.autoRemove,
       workingDir: this.normalizedContainerWorkspaceRoot,
@@ -695,27 +736,19 @@ export class BoxliteExecutor implements Executor {
   }
 
   private extractBoxFromGetOrCreateResult(result: unknown): unknown {
-    if (result && typeof result === "object") {
-      const asRecord = result as Record<string, unknown>;
-      if (asRecord.box) {
-        return asRecord.box;
-      }
+    if (isRecord(result) && "box" in result) {
+      return result.box;
     }
 
     return result;
   }
 
-  private assertBoxHandle(value: unknown): BoxEntry["box"] {
-    if (!value || typeof value !== "object") {
-      throw new Error("BoxLite runtime returned an invalid box handle");
-    }
-
-    const maybeBox = value as Record<string, unknown>;
-    if (typeof maybeBox.exec !== "function" || typeof maybeBox.stop !== "function") {
+  private assertBoxHandle(value: unknown): BoxHandle {
+    if (!isBoxHandle(value)) {
       throw new Error("BoxLite runtime returned a box without exec/stop methods");
     }
 
-    return maybeBox as unknown as BoxEntry["box"];
+    return value;
   }
 
   private async stopAndInvalidate(key: string, expected: BoxEntry | undefined, reason: string): Promise<void> {
@@ -809,9 +842,9 @@ export class BoxliteExecutor implements Executor {
   }
 
   private async readExecutionStream(
-    streamFactory: () => Promise<{ next: () => Promise<string | null> }>,
+    streamFactory: () => Promise<BoxExecutionReader>,
   ): Promise<string> {
-    let stream: { next: () => Promise<string | null> } | null = null;
+    let stream: BoxExecutionReader | null = null;
     try {
       stream = await streamFactory();
     } catch {
@@ -860,12 +893,17 @@ export class BoxliteExecutor implements Executor {
         throw new Error("getNativeModule export not found");
       }
 
-      const native = getNativeModule() as { JsBoxlite?: { withDefaultConfig?: () => NativeRuntime } };
-      if (!native?.JsBoxlite?.withDefaultConfig) {
+      const native = getNativeModule();
+      if (!isRecord(native) || !isRecord(native.JsBoxlite) || typeof native.JsBoxlite.withDefaultConfig !== "function") {
         throw new Error("JsBoxlite.withDefaultConfig is not available");
       }
 
-      return native.JsBoxlite.withDefaultConfig();
+      const runtime = native.JsBoxlite.withDefaultConfig();
+      if (!isNativeRuntime(runtime)) {
+        throw new Error("BoxLite runtime handle is invalid");
+      }
+
+      return runtime;
     } catch (error) {
       throw new Error(formatBoxliteInitError(error));
     }

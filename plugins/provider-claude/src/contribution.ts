@@ -1,7 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { Readable, Writable } from "node:stream";
 import type { ImageContent } from "@mariozechner/pi-ai";
+import {
+  query as runClaudeQuery,
+  type HookCallback,
+  type HookCallbackMatcher,
+  type HookEvent,
+  type Options as ClaudeSdkOptions,
+  type Query as ClaudeSdkQuery,
+  type SDKAssistantMessage,
+  type SDKMessage,
+  type SDKUserMessage,
+  type SpawnOptions as ClaudeSdkSpawnOptions,
+  type SpawnedProcess as ClaudeSdkSpawnedProcess,
+} from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type {
   GatewayAgentEvent,
@@ -10,8 +24,8 @@ import type {
   ProviderInstance,
   ProviderInstanceCreateOptions,
   ProviderRuntimeCreateOptions,
-  SpawnOptions,
-  SpawnedProcess,
+  SpawnOptions as GatewaySpawnOptions,
+  SpawnedProcess as GatewaySpawnedProcess,
 } from "@im-agent-gateway/plugin-sdk";
 
 const BOXLITE_CONTEXT_CONVERSATION_KEY_ENV = "__IM_AGENT_BOXLITE_CONVERSATION_KEY";
@@ -39,7 +53,7 @@ const DEFAULT_READONLY_TOOLS = ["Read", "Grep", "Glob", "LS"] as const;
 const DEFAULT_FULL_TOOLS = [...DEFAULT_READONLY_TOOLS, "Edit", "Write", "Bash"] as const;
 
 type SettingSource = "user" | "project" | "local";
-type JsonRecord = Record<string, unknown>;
+type ClaudeImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
 interface ClaudeProviderConfig {
   model: string;
@@ -62,21 +76,6 @@ interface SessionMeta {
   updatedAtMs: number;
 }
 
-interface ClaudeSdkModule {
-  query: (params: {
-    prompt: string | AsyncIterable<unknown>;
-    options?: Record<string, unknown>;
-  }) => AsyncGenerator<unknown, void> & { interrupt: () => Promise<void>; close?: () => void };
-}
-
-interface ParsedSdkSpawnOptions {
-  command: string;
-  args: string[];
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  signal: AbortSignal;
-}
-
 const claudeProviderConfigSchema = z.object({
   model: z.string().min(1),
   maxTurns: z.number().int().positive().default(20),
@@ -95,13 +94,8 @@ const claudeProviderConfigSchema = z.object({
   fullTools: z.array(z.string().min(1)).default([...DEFAULT_FULL_TOOLS]),
 });
 
-let cachedSdkModule: ClaudeSdkModule | null = null;
-
-function asRecord(value: unknown): JsonRecord | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  return value as JsonRecord;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
 }
 
 function normalizeExecutable(configBaseDir: string, value: string | undefined): string | undefined {
@@ -153,6 +147,15 @@ function normalizeToolName(toolName: string): string {
   return toolName;
 }
 
+function normalizeClaudeImageMimeType(mimeType: string): ClaudeImageMediaType | null {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === "image/jpeg" || normalized === "image/jpg") return "image/jpeg";
+  if (normalized === "image/png") return "image/png";
+  if (normalized === "image/gif") return "image/gif";
+  if (normalized === "image/webp") return "image/webp";
+  return null;
+}
+
 function stringifyOutput(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === null || value === undefined) return "(no output)";
@@ -164,17 +167,15 @@ function stringifyOutput(value: unknown): string {
 }
 
 function extractTextFromToolResponse(value: unknown): string {
-  const payload = asRecord(value);
-  if (!payload) return stringifyOutput(value);
+  if (!isRecord(value)) return stringifyOutput(value);
 
-  const content = payload.content;
+  const content = value.content;
   if (!Array.isArray(content)) return stringifyOutput(value);
 
   const textBlocks = content
     .map((item) => {
-      const entry = asRecord(item);
-      if (!entry) return null;
-      return typeof entry.text === "string" ? entry.text : null;
+      if (!isRecord(item)) return null;
+      return typeof item.text === "string" ? item.text : null;
     })
     .filter((item): item is string => typeof item === "string");
 
@@ -184,39 +185,26 @@ function extractTextFromToolResponse(value: unknown): string {
 
 function parseToolResult(value: unknown): { isError: boolean; output: string } {
   const text = extractTextFromToolResponse(value);
-  const payload = asRecord(value);
-  const isError = payload?.isError === true || payload?.is_error === true;
+  const isError = isRecord(value) && (value.isError === true || value.is_error === true);
   return { isError, output: text };
 }
 
-function extractAssistantText(message: unknown): string {
-  const asMsg = asRecord(message);
-  const betaMessage = asRecord(asMsg?.message);
-  const content = betaMessage?.content;
-  if (!Array.isArray(content)) return "";
-
-  return content
-    .map((block) => {
-      const entry = asRecord(block);
-      if (!entry || entry.type !== "text") return null;
-      return typeof entry.text === "string" ? entry.text : null;
-    })
+function extractAssistantText(message: SDKAssistantMessage): string {
+  return message.message.content
+    .map((block) => (block.type === "text" ? block.text : null))
     .filter((part): part is string => typeof part === "string")
     .join("\n")
     .trim();
 }
 
-function extractTextDelta(message: unknown): string | null {
-  const asMsg = asRecord(message);
-  if (!asMsg || asMsg.type !== "stream_event") return null;
+function extractTextDelta(message: SDKMessage): string | null {
+  if (message.type !== "stream_event") return null;
+  const event = message.event;
+  if (event.type !== "content_block_delta" || event.delta.type !== "text_delta") {
+    return null;
+  }
 
-  const event = asRecord(asMsg.event);
-  if (!event || event.type !== "content_block_delta") return null;
-
-  const delta = asRecord(event.delta);
-  if (!delta || delta.type !== "text_delta") return null;
-
-  return typeof delta.text === "string" ? delta.text : null;
+  return event.delta.text;
 }
 
 function isResumeError(error: unknown): boolean {
@@ -235,88 +223,19 @@ function isResumeError(error: unknown): boolean {
   );
 }
 
-function parseSdkSpawnOptions(value: unknown, fallbackCwd: string): ParsedSdkSpawnOptions {
-  const payload = asRecord(value);
-  if (!payload) {
-    throw new Error("Claude SDK spawn options are invalid");
-  }
-
-  const command = typeof payload.command === "string" && payload.command.trim().length > 0
-    ? payload.command
-    : null;
-  if (!command) {
-    throw new Error("Claude SDK spawn options missing command");
-  }
-
-  const args = Array.isArray(payload.args)
-    ? payload.args.filter((entry): entry is string => typeof entry === "string")
-    : [];
-
-  const cwd = typeof payload.cwd === "string" && payload.cwd.trim().length > 0
-    ? payload.cwd
-    : fallbackCwd;
-
-  const env: NodeJS.ProcessEnv = {};
-  const envRecord = asRecord(payload.env);
-  if (envRecord) {
-    for (const [key, entry] of Object.entries(envRecord)) {
-      if (typeof entry === "string") {
-        env[key] = entry;
-      }
-    }
-  }
-
-  const signal = payload.signal instanceof AbortSignal
-    ? payload.signal
-    : new AbortController().signal;
-
-  return { command, args, cwd, env, signal };
-}
-
-async function loadClaudeSdkModule(): Promise<ClaudeSdkModule> {
-  if (cachedSdkModule) {
-    return cachedSdkModule;
-  }
-
-  const validate = (value: unknown): ClaudeSdkModule | null => {
-    const module = asRecord(value);
-    if (!module) return null;
-
-    const query = module.query;
-    if (typeof query !== "function") {
-      return null;
-    }
-
-    return {
-      query: query as ClaudeSdkModule["query"],
-    };
-  };
-
-  const loaded = validate(await import("@anthropic-ai/claude-agent-sdk"));
-  if (loaded) {
-    cachedSdkModule = loaded;
-    return loaded;
-  }
-
-  throw new Error("Failed to load @anthropic-ai/claude-agent-sdk");
-}
-
 class ClaudeGatewayRuntime implements GatewayAgentRuntime {
   private readonly listeners = new Set<(event: GatewayAgentEvent) => void>();
   private readonly allowedTools: string[];
-  private readonly hooks: Record<string, Array<{ hooks: Array<(input: unknown) => Promise<Record<string, unknown>>> }>>;
+  private readonly hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
   private readonly activeToolIds = new Set<string>();
   private activeAbortController: AbortController | null = null;
   private lastSpawnCommandPreview: string | null = null;
   private lastSpawnStdoutPreview: string | null = null;
   private lastSpawnStderrPreview: string | null = null;
   private lastApiKeySource: string | null = null;
-  private activeQuery:
-    | (AsyncGenerator<unknown, void> & { interrupt: () => Promise<void>; close?: () => void })
-    | null = null;
+  private activeQuery: ClaudeSdkQuery | null = null;
 
   constructor(
-    private readonly sdk: ClaudeSdkModule,
     private readonly providerId: string,
     private readonly conversationKey: string,
     private readonly route: ProviderRuntimeCreateOptions["route"],
@@ -404,7 +323,7 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
     const abortController = new AbortController();
     const pathToClaudeCodeExecutable = this.resolvePathToClaudeCodeExecutable();
 
-    const queryOptions: Record<string, unknown> = {
+    const queryOptions: ClaudeSdkOptions = {
       cwd: this.route.profile.projectRoot,
       model: this.providerConfig.model,
       abortController,
@@ -418,7 +337,7 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
       ...(this.providerConfig.dangerouslySkipPermissions ? { allowDangerouslySkipPermissions: true } : {}),
       ...(this.providerConfig.sandboxedProcess
         ? {
-          spawnClaudeCodeProcess: (spawnOptions: unknown) => this.spawnClaudeProcess(spawnOptions),
+          spawnClaudeCodeProcess: (spawnOptions: ClaudeSdkSpawnOptions) => this.spawnClaudeProcess(spawnOptions),
         }
         : {}),
       ...(this.systemPrompt ? { systemPrompt: this.systemPrompt } : {}),
@@ -427,12 +346,12 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
       ...(this.providerConfig.executableArgs.length > 0 ? { executableArgs: this.providerConfig.executableArgs } : {}),
     };
 
-    let queryHandle: AsyncGenerator<unknown, void> & { interrupt: () => Promise<void>; close?: () => void };
+    let queryHandle: ClaudeSdkQuery;
     try {
-      queryHandle = this.sdk.query({
-        prompt: this.singleMessageStream(userMessage) as AsyncIterable<unknown>,
+      queryHandle = runClaudeQuery({
+        prompt: this.singleMessageStream(userMessage),
         options: queryOptions,
-      }) as AsyncGenerator<unknown, void> & { interrupt: () => Promise<void>; close?: () => void };
+      });
     } catch (error) {
       throw this.enhanceSandboxSpawnError(error);
     }
@@ -447,17 +366,12 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
 
     try {
       for await (const message of queryHandle) {
-        const asMsg = asRecord(message);
-        if (!asMsg) continue;
-
-        if (typeof asMsg.session_id === "string" && asMsg.session_id.trim().length > 0) {
-          this.sessionId = asMsg.session_id;
+        if (typeof message.session_id === "string" && message.session_id.trim().length > 0) {
+          this.sessionId = message.session_id;
         }
 
-        if (asMsg.type === "system" && asMsg.subtype === "init") {
-          if (typeof asMsg.apiKeySource === "string") {
-            this.lastApiKeySource = asMsg.apiKeySource;
-          }
+        if (message.type === "system" && message.subtype === "init") {
+          this.lastApiKeySource = message.apiKeySource;
 
           if (this.providerConfig.authMode === "env" && this.lastApiKeySource === "none") {
             throw new Error(
@@ -468,30 +382,30 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
           continue;
         }
 
-        const delta = extractTextDelta(asMsg);
+        const delta = extractTextDelta(message);
         if (delta !== null) {
           assistantFromDeltas += delta;
           this.emit({ type: "message_delta", delta });
           continue;
         }
 
-        if (asMsg.type === "assistant") {
-          const textFromAssistant = extractAssistantText(asMsg);
+        if (message.type === "assistant") {
+          const textFromAssistant = extractAssistantText(message);
           if (textFromAssistant.length > 0) {
             assistantFromMessage = textFromAssistant;
           }
           continue;
         }
 
-        if (asMsg.type === "system" && asMsg.subtype === "status" && asMsg.status === "compacting") {
+        if (message.type === "system" && message.subtype === "status" && message.status === "compacting") {
           this.emit({ type: "status", message: "Compacting context..." });
           continue;
         }
 
-        if (asMsg.type === "result") {
-          const resultSubtype = typeof asMsg.subtype === "string" ? asMsg.subtype : null;
-          if (typeof asMsg.result === "string") {
-            assistantFromResult = asMsg.result;
+        if (message.type === "result") {
+          const resultSubtype = message.subtype;
+          if (resultSubtype === "success") {
+            assistantFromResult = message.result;
           }
 
           if (resultSubtype === "error_max_turns") {
@@ -499,10 +413,8 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
             continue;
           }
 
-          if (asMsg.is_error === true || (resultSubtype !== null && resultSubtype.startsWith("error_"))) {
-            const errors = Array.isArray(asMsg.errors)
-              ? asMsg.errors.filter((item): item is string => typeof item === "string")
-              : [];
+          if (message.is_error === true || resultSubtype.startsWith("error_")) {
+            const errors = "errors" in message ? message.errors : [];
             const details = errors.length > 0 ? errors.join("\n") : `Claude query failed (${String(resultSubtype)})`;
             throw new Error(details);
           }
@@ -526,38 +438,70 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
     }
   }
 
-  private spawnClaudeProcess(spawnOptions: unknown): SpawnedProcess {
-    const executorRecord = this.executor as { spawn?: unknown };
-    if (typeof executorRecord.spawn !== "function") {
-      throw new Error(
-        `Sandbox executor for route '${this.route.routeId}' does not support process spawn; provider.claude requires spawn()`,
-      );
-    }
-
-    const parsed = parseSdkSpawnOptions(spawnOptions, this.route.profile.projectRoot);
-    const normalizedCwd = resolve(parsed.cwd);
+  private spawnClaudeProcess(spawnOptions: ClaudeSdkSpawnOptions): ClaudeSdkSpawnedProcess {
+    const normalizedCwd = resolve(spawnOptions.cwd ?? this.route.profile.projectRoot);
     assertWithinRoot(normalizedCwd, this.route.profile.projectRoot);
-    const attemptedCommand = [parsed.command, ...parsed.args].join(" ").trim();
+    const attemptedCommand = [spawnOptions.command, ...spawnOptions.args].join(" ").trim();
     this.lastSpawnCommandPreview = attemptedCommand.length <= 240
       ? attemptedCommand
       : `${attemptedCommand.slice(0, 237)}...`;
 
-    const spawn = executorRecord.spawn.bind(this.executor) as (options: SpawnOptions) => SpawnedProcess;
-    const spawned = spawn({
-      command: parsed.command,
-      args: parsed.args,
+    const spawned = this.executor.spawn({
+      command: spawnOptions.command,
+      args: spawnOptions.args,
       cwd: normalizedCwd,
       env: {
-        ...parsed.env,
-        ...this.buildSandboxProcessEnv(parsed.env),
+        ...spawnOptions.env,
+        ...this.buildSandboxProcessEnv(spawnOptions.env),
         ...this.buildSandboxContextEnv(),
       },
-      signal: parsed.signal,
+      signal: spawnOptions.signal,
       tty: false,
-    });
+    } satisfies GatewaySpawnOptions);
 
     this.captureSpawnStderr(spawned);
-    return spawned;
+    return this.toClaudeSdkSpawnedProcess(spawned);
+  }
+
+  private toClaudeSdkSpawnedProcess(process: GatewaySpawnedProcess): ClaudeSdkSpawnedProcess {
+    if (!(process.stdin instanceof Writable) || !(process.stdout instanceof Readable)) {
+      throw new Error("Sandbox executor returned non-Node streams; incompatible with Claude SDK spawn contract");
+    }
+
+    return {
+      stdin: process.stdin,
+      stdout: process.stdout,
+      get killed() {
+        return process.killed;
+      },
+      get exitCode() {
+        return process.exitCode;
+      },
+      kill(signal: NodeJS.Signals) {
+        return process.kill(signal);
+      },
+      on(event, listener) {
+        if (event === "exit") {
+          process.on("exit", listener as (code: number | null, signal: NodeJS.Signals | null) => void);
+          return;
+        }
+        process.on("error", listener as (error: Error) => void);
+      },
+      once(event, listener) {
+        if (event === "exit") {
+          process.once("exit", listener as (code: number | null, signal: NodeJS.Signals | null) => void);
+          return;
+        }
+        process.once("error", listener as (error: Error) => void);
+      },
+      off(event, listener) {
+        if (event === "exit") {
+          process.off("exit", listener as (code: number | null, signal: NodeJS.Signals | null) => void);
+          return;
+        }
+        process.off("error", listener as (error: Error) => void);
+      },
+    };
   }
 
   private resolvePathToClaudeCodeExecutable(): string | undefined {
@@ -590,7 +534,7 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
     };
   }
 
-  private captureSpawnStderr(process: SpawnedProcess): void {
+  private captureSpawnStderr(process: GatewaySpawnedProcess): void {
     let stdoutTail = "";
     let stderrTail = "";
     const maxTailLength = 8_000;
@@ -710,24 +654,20 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
     };
   }
 
-  private buildUserMessage(text: string, images: ImageContent[], sessionId: string): {
-    type: "user";
-    session_id: string;
-    parent_tool_use_id: null;
-    message: {
-      role: "user";
-      content: Array<{ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } }>;
-    };
-  } {
-    const content: Array<{ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } }> =
-      [{ type: "text", text }];
+  private buildUserMessage(text: string, images: ImageContent[], sessionId: string): SDKUserMessage {
+    const content: NonNullable<SDKUserMessage["message"]["content"]> = [{ type: "text", text }];
 
     for (const image of images) {
+      const mimeType = normalizeClaudeImageMimeType(image.mimeType);
+      if (!mimeType) {
+        continue;
+      }
+
       content.push({
         type: "image",
         source: {
           type: "base64",
-          media_type: image.mimeType,
+          media_type: mimeType,
           data: image.data,
         },
       });
@@ -744,15 +684,7 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
     };
   }
 
-  private async *singleMessageStream(message: {
-    type: "user";
-    session_id: string;
-    parent_tool_use_id: null;
-    message: {
-      role: "user";
-      content: Array<{ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } }>;
-    };
-  }): AsyncGenerator<typeof message, void, undefined> {
+  private async *singleMessageStream(message: SDKUserMessage): AsyncGenerator<SDKUserMessage, void, undefined> {
     yield message;
   }
 
@@ -763,12 +695,15 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
     return [...source];
   }
 
-  private buildHooks(): Record<string, Array<{ hooks: Array<(input: unknown) => Promise<Record<string, unknown>>> }>> {
-    const preToolUse = async (input: unknown): Promise<Record<string, unknown>> => {
-      const payload = asRecord(input);
-      const rawToolName = typeof payload?.tool_name === "string" ? payload.tool_name : "unknown";
+  private buildHooks(): Partial<Record<HookEvent, HookCallbackMatcher[]>> {
+    const preToolUse: HookCallback = async (input) => {
+      if (input.hook_event_name !== "PreToolUse") {
+        return { continue: true };
+      }
+
+      const rawToolName = input.tool_name;
       const displayToolName = normalizeToolName(rawToolName);
-      const toolUseId = typeof payload?.tool_use_id === "string" ? payload.tool_use_id : "";
+      const toolUseId = input.tool_use_id;
 
       if (toolUseId.length > 0 && this.activeToolIds.has(toolUseId)) {
         return { continue: true };
@@ -782,12 +717,15 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
       return { continue: true };
     };
 
-    const postToolUse = async (input: unknown): Promise<Record<string, unknown>> => {
-      const payload = asRecord(input);
-      const rawToolName = typeof payload?.tool_name === "string" ? payload.tool_name : "unknown";
+    const postToolUse: HookCallback = async (input) => {
+      if (input.hook_event_name !== "PostToolUse") {
+        return { continue: true };
+      }
+
+      const rawToolName = input.tool_name;
       const displayToolName = normalizeToolName(rawToolName);
-      const toolUseId = typeof payload?.tool_use_id === "string" ? payload.tool_use_id : "";
-      const parsed = parseToolResult(payload?.tool_response);
+      const toolUseId = input.tool_use_id;
+      const parsed = parseToolResult(input.tool_response);
 
       if (toolUseId.length > 0) {
         this.activeToolIds.delete(toolUseId);
@@ -802,17 +740,20 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
       return { continue: true };
     };
 
-    const postToolUseFailure = async (input: unknown): Promise<Record<string, unknown>> => {
-      const payload = asRecord(input);
-      const rawToolName = typeof payload?.tool_name === "string" ? payload.tool_name : "unknown";
+    const postToolUseFailure: HookCallback = async (input) => {
+      if (input.hook_event_name !== "PostToolUseFailure") {
+        return { continue: true };
+      }
+
+      const rawToolName = input.tool_name;
       const displayToolName = normalizeToolName(rawToolName);
-      const toolUseId = typeof payload?.tool_use_id === "string" ? payload.tool_use_id : "";
+      const toolUseId = input.tool_use_id;
 
       if (toolUseId.length > 0) {
         this.activeToolIds.delete(toolUseId);
       }
 
-      const errorText = typeof payload?.error === "string" ? payload.error : "Tool failed";
+      const errorText = input.error || "Tool failed";
       this.emit({
         type: "tool_end",
         toolName: displayToolName,
@@ -822,18 +763,20 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
       return { continue: true };
     };
 
-    const notification = async (input: unknown): Promise<Record<string, unknown>> => {
-      const payload = asRecord(input);
-      const message = typeof payload?.message === "string" ? payload.message : null;
+    const notification: HookCallback = async (input) => {
+      if (input.hook_event_name !== "Notification") {
+        return { continue: true };
+      }
+
+      const message = input.message;
       if (message && message.trim().length > 0) {
         this.emit({ type: "status", message });
       }
       return { continue: true };
     };
 
-    const sessionStart = async (input: unknown): Promise<Record<string, unknown>> => {
-      const payload = asRecord(input);
-      if (payload?.source === "resume") {
+    const sessionStart: HookCallback = async (input) => {
+      if (input.hook_event_name === "SessionStart" && input.source === "resume") {
         this.emit({ type: "status", message: "Resumed previous Claude session." });
       }
       return { continue: true };
@@ -873,7 +816,6 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
 class ClaudeProviderInstanceImpl implements ProviderInstance {
   constructor(
     readonly id: string,
-    private readonly sdk: ClaudeSdkModule,
     private readonly providerConfig: ClaudeProviderConfig,
     private readonly dataConfig: ProviderInstanceCreateOptions["data"],
     private readonly logger: ProviderInstanceCreateOptions["host"]["logger"],
@@ -881,15 +823,6 @@ class ClaudeProviderInstanceImpl implements ProviderInstance {
 
   async createRuntime(options: ProviderRuntimeCreateOptions): Promise<GatewayAgentRuntime> {
     await mkdir(this.dataConfig.sessionsDir, { recursive: true });
-
-    if (this.providerConfig.sandboxedProcess && this.providerConfig.requireSandboxSpawn) {
-      const executorRecord = options.executor as { spawn?: unknown };
-      if (typeof executorRecord.spawn !== "function") {
-        throw new Error(
-          `Provider '${this.id}' requires sandbox executor spawn() support, but route '${options.route.routeId}' sandbox does not expose it`,
-        );
-      }
-    }
 
     const sessionMetaPath = this.getSessionMetaPath(options.inbound);
     let restoredSessionId: string | undefined;
@@ -942,7 +875,6 @@ class ClaudeProviderInstanceImpl implements ProviderInstance {
     );
 
     return new ClaudeGatewayRuntime(
-      this.sdk,
       this.id,
       options.conversationKey,
       options.route,
@@ -980,7 +912,6 @@ export const providerClaudeContribution: ProviderContributionModule = {
   async createInstance(options) {
     const parsed = claudeProviderConfigSchema.parse(options.config);
     const executable = normalizeExecutable(options.host.configBaseDir, parsed.executable);
-    const sdk = await loadClaudeSdkModule();
 
     const authCandidates = [...new Set(parsed.authEnvKeys)];
     const hasAuthEnv = authCandidates.some((key) => {
@@ -1023,7 +954,7 @@ export const providerClaudeContribution: ProviderContributionModule = {
       ...(executable ? { executable } : {}),
     };
 
-    return new ClaudeProviderInstanceImpl(options.instanceId, sdk, config, options.data, options.host.logger);
+    return new ClaudeProviderInstanceImpl(options.instanceId, config, options.data, options.host.logger);
   },
 };
 

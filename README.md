@@ -77,12 +77,15 @@ npm run start -- --config ./config/gateway.json
 ## 本地插件开发（plugins 目录）
 
 `plugins/*` 目录用于本地开发插件源码。宿主构建不会编译它们，需要插件各自构建。
+这些本地流程统一由 `scripts/local-extensions.mjs` 驱动。
 
 1. 安装插件开发依赖
 
 ```bash
 npm run plugins:install
 ```
+
+说明：该命令只会安装 `plugins/*` 目录下各插件包的开发依赖，不会安装到运行时扩展目录。
 
 2. 构建本地插件
 
@@ -93,13 +96,19 @@ npm run plugins:build
 3. 把本地插件安装到扩展 store
 
 ```bash
-npm run start -- extension install file:./plugins/provider-pi --config ./config/gateway.json
-npm run start -- extension install file:./plugins/connector-discord --config ./config/gateway.json
+npm run extensions:install:local
+```
+
+或一步完成开发依赖安装 + 构建 + 安装到扩展 store：
+
+```bash
+npm run plugins:setup:local
 ```
 
 说明：
 - `@im-agent-gateway/plugin-sdk` 在插件中按 `peerDependencies`（可选）声明，开发态通过 `devDependencies` 的 `file:../plugin-sdk` 解决类型依赖。
 - 运行态只加载 `<data.rootDir>/extensions/node_modules`，不会回退到宿主 `plugins/*`。
+- 示例配置 `config/gateway.json` 默认 `data.rootDir` 是 `./data`，因此扩展安装目录是 `./data/extensions`。
 
 ## 配置语义
 

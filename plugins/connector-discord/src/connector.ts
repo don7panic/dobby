@@ -1,10 +1,11 @@
 import {
   AttachmentBuilder,
-  ChannelType,
   Client,
   GatewayIntentBits,
   Partials,
+  type Message,
   type MessageCreateOptions,
+  type SendableChannels,
 } from "discord.js";
 import type {
   ConnectorCapabilities,
@@ -22,42 +23,6 @@ export interface DiscordConnectorConfig {
   botTokenEnv: string;
   allowDirectMessages: boolean;
   allowedGuildIds: string[];
-}
-
-interface DiscordEditableMessage {
-  id: string;
-  edit(options: MessageCreateOptions): Promise<{ id: string }>;
-}
-
-interface DiscordMessageStore {
-  fetch(messageId: string): Promise<DiscordEditableMessage>;
-}
-
-interface DiscordTextChannel {
-  type: ChannelType;
-  isTextBased(): boolean;
-  send(options: MessageCreateOptions): Promise<{ id: string }>;
-  messages: DiscordMessageStore;
-}
-
-function hasMessagingApi(channel: unknown): channel is DiscordTextChannel {
-  if (!channel || typeof channel !== "object") return false;
-
-  const maybeChannel = channel as {
-    send?: unknown;
-    messages?: unknown;
-    isTextBased?: unknown;
-    type?: unknown;
-  };
-
-  return (
-    typeof maybeChannel.send === "function" &&
-    typeof maybeChannel.isTextBased === "function" &&
-    typeof maybeChannel.type === "number" &&
-    typeof maybeChannel.messages === "object" &&
-    maybeChannel.messages !== null &&
-    typeof (maybeChannel.messages as { fetch?: unknown }).fetch === "function"
-  );
 }
 
 function clampDiscordContent(text: string): string {
@@ -123,7 +88,7 @@ export class DiscordConnector implements ConnectorPlugin {
       this.logger.info({ userId: this.botUserId, userName: this.client.user.username }, "Discord connector ready");
     });
 
-    this.client.on("messageCreate", async (message) => {
+    this.client.on("messageCreate", async (message: Message) => {
       if (!this.client?.user || !this.ctx || !this.botUserId) return;
 
       if (message.guildId && this.config.allowedGuildIds.length > 0 && !this.config.allowedGuildIds.includes(message.guildId)) {
@@ -214,23 +179,11 @@ export class DiscordConnector implements ConnectorPlugin {
     this.botUserId = null;
   }
 
-  private async fetchTextChannel(channelId: string): Promise<DiscordTextChannel> {
+  private async fetchTextChannel(channelId: string): Promise<SendableChannels> {
     if (!this.client) throw new Error("Discord connector is not started");
 
     const channel = await this.client.channels.fetch(channelId);
-    if (!channel) {
-      throw new Error(`Discord channel '${channelId}' not found`);
-    }
-
-    if (!hasMessagingApi(channel)) {
-      throw new Error(`Discord channel '${channelId}' is not text-based`);
-    }
-
-    if (channel.type === ChannelType.GuildVoice || channel.type === ChannelType.GuildStageVoice) {
-      throw new Error(`Discord channel '${channelId}' is not text-based`);
-    }
-
-    if (!channel.isTextBased()) {
+    if (!channel || !channel.isSendable()) {
       throw new Error(`Discord channel '${channelId}' is not text-based`);
     }
 
