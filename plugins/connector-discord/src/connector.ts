@@ -18,11 +18,15 @@ import type {
 import { mapDiscordMessage } from "./mapper.js";
 
 const DISCORD_MAX_CONTENT_LENGTH = 2000;
+const DEFAULT_RECONNECT_STALE_MS = 60_000;
+const DEFAULT_RECONNECT_CHECK_INTERVAL_MS = 10_000;
 
 export interface DiscordConnectorConfig {
   botTokenEnv: string;
   allowDirectMessages: boolean;
   allowedGuildIds: string[];
+  reconnectStaleMs?: number;
+  reconnectCheckIntervalMs?: number;
 }
 
 function clampDiscordContent(text: string): string {
@@ -37,6 +41,10 @@ function clampDiscordContent(text: string): string {
   }
 
   return `${text.slice(0, budget)}${suffix}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
 }
 
 export class DiscordConnector implements ConnectorPlugin {
@@ -54,6 +62,11 @@ export class DiscordConnector implements ConnectorPlugin {
   private client: Client | null = null;
   private ctx: ConnectorContext | null = null;
   private botUserId: string | null = null;
+  private botToken: string | null = null;
+  private reconnectWatchdog: NodeJS.Timeout | null = null;
+  private reconnectInFlight = false;
+  private lastHealthyAtMs = 0;
+  private stopped = false;
 
   constructor(
     id: string,
@@ -65,61 +78,25 @@ export class DiscordConnector implements ConnectorPlugin {
   }
 
   async start(ctx: ConnectorContext): Promise<void> {
+    if (this.client) {
+      this.logger.warn({ connectorId: this.id }, "Discord connector start called while already started");
+      return;
+    }
+
     const token = process.env[this.config.botTokenEnv];
     if (!token) {
       throw new Error(`Discord bot token env '${this.config.botTokenEnv}' is not set`);
     }
 
     this.ctx = ctx;
+    this.botToken = token;
+    this.stopped = false;
+    this.lastHealthyAtMs = Date.now();
 
-    this.client = new Client({
-      intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages,
-      ],
-      partials: [Partials.Channel, Partials.Message],
-    });
-
-    this.client.once("clientReady", () => {
-      if (!this.client?.user) return;
-      this.botUserId = this.client.user.id;
-      this.logger.info({ userId: this.botUserId, userName: this.client.user.username }, "Discord connector ready");
-    });
-
-    this.client.on("messageCreate", async (message: Message) => {
-      if (!this.client?.user || !this.ctx || !this.botUserId) return;
-
-      if (message.guildId && this.config.allowedGuildIds.length > 0 && !this.config.allowedGuildIds.includes(message.guildId)) {
-        return;
-      }
-
-      if (!message.guildId && !this.config.allowDirectMessages) {
-        return;
-      }
-
-      if (message.author.bot) return;
-
-      if (message.content.trim().toLowerCase() === "stop") {
-        await this.ctx.emitControl({
-          type: "stop",
-          connectorId: this.id,
-          platform: "discord",
-          accountId: this.botUserId,
-          chatId: message.channelId,
-          ...(message.channel.isThread() ? { threadId: message.channelId } : {}),
-        });
-        return;
-      }
-
-      const inbound = await mapDiscordMessage(message, this.id, this.botUserId, this.attachmentsRoot, this.logger);
-      if (!inbound) return;
-
-      await this.ctx.emitInbound(inbound);
-    });
-
+    this.client = this.createClient();
+    this.bindClientEventHandlers(this.client);
     await this.client.login(token);
+    this.startReconnectWatchdog();
   }
 
   async send(message: OutboundEnvelope): Promise<ConnectorSendResult> {
@@ -172,11 +149,181 @@ export class DiscordConnector implements ConnectorPlugin {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
+    this.stopReconnectWatchdog();
+    this.reconnectInFlight = false;
     if (!this.client) return;
-    this.client.destroy();
+
+    const client = this.client;
     this.client = null;
+    client.removeAllListeners();
+    client.destroy();
     this.ctx = null;
     this.botUserId = null;
+    this.botToken = null;
+    this.lastHealthyAtMs = 0;
+  }
+
+  private createClient(): Client {
+    return new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages,
+      ],
+      partials: [Partials.Channel, Partials.Message],
+    });
+  }
+
+  private bindClientEventHandlers(client: Client): void {
+    client.once("clientReady", () => {
+      if (client !== this.client || !client.user) return;
+      this.botUserId = client.user.id;
+      this.lastHealthyAtMs = Date.now();
+      this.logger.info({ userId: this.botUserId, userName: client.user.username }, "Discord connector ready");
+    });
+
+    client.on("shardDisconnect", (event, shardId) => {
+      if (client !== this.client) return;
+      this.logger.warn(
+        {
+          shardId,
+          reconnecting: client.ws.shards.get(shardId)?.status === 5,
+          ...this.parseCloseEvent(event),
+        },
+        "Discord shard disconnected",
+      );
+    });
+
+    client.on("shardReconnecting", (shardId) => {
+      if (client !== this.client) return;
+      this.logger.warn({ shardId }, "Discord shard reconnecting");
+    });
+
+    client.on("shardResume", (shardId, replayedEvents) => {
+      if (client !== this.client) return;
+      this.lastHealthyAtMs = Date.now();
+      this.logger.info({ shardId, replayedEvents }, "Discord shard resumed");
+    });
+
+    client.on("error", (error) => {
+      if (client !== this.client) return;
+      this.logger.warn({ err: error }, "Discord client error");
+    });
+
+    client.on("shardError", (error, shardId) => {
+      if (client !== this.client) return;
+      this.logger.warn({ err: error, shardId }, "Discord shard error");
+    });
+
+    client.on("invalidated", () => {
+      if (client !== this.client) return;
+      this.logger.error("Discord session invalidated; forcing reconnect");
+      void this.forceReconnect("session_invalidated");
+    });
+
+    client.on("messageCreate", async (message: Message) => {
+      if (client !== this.client || !client.user || !this.ctx || !this.botUserId) return;
+
+      if (message.guildId && this.config.allowedGuildIds.length > 0 && !this.config.allowedGuildIds.includes(message.guildId)) {
+        return;
+      }
+
+      if (!message.guildId && !this.config.allowDirectMessages) {
+        return;
+      }
+
+      if (message.author.bot) return;
+
+      if (message.content.trim().toLowerCase() === "stop") {
+        await this.ctx.emitControl({
+          type: "stop",
+          connectorId: this.id,
+          platform: "discord",
+          accountId: this.botUserId,
+          chatId: message.channelId,
+          ...(message.channel.isThread() ? { threadId: message.channelId } : {}),
+        });
+        return;
+      }
+
+      const inbound = await mapDiscordMessage(message, this.id, this.botUserId, this.attachmentsRoot, this.logger);
+      if (!inbound) return;
+
+      await this.ctx.emitInbound(inbound);
+    });
+  }
+
+  private startReconnectWatchdog(): void {
+    if (this.reconnectWatchdog) return;
+    const intervalMs = this.config.reconnectCheckIntervalMs ?? DEFAULT_RECONNECT_CHECK_INTERVAL_MS;
+    this.reconnectWatchdog = setInterval(() => {
+      void this.ensureConnected();
+    }, intervalMs);
+  }
+
+  private stopReconnectWatchdog(): void {
+    if (!this.reconnectWatchdog) return;
+    clearInterval(this.reconnectWatchdog);
+    this.reconnectWatchdog = null;
+  }
+
+  private async ensureConnected(): Promise<void> {
+    const client = this.client;
+    if (!client || this.stopped || this.reconnectInFlight) return;
+
+    if (client.isReady()) {
+      this.lastHealthyAtMs = Date.now();
+      return;
+    }
+
+    const staleMs = Date.now() - this.lastHealthyAtMs;
+    const thresholdMs = this.config.reconnectStaleMs ?? DEFAULT_RECONNECT_STALE_MS;
+    if (staleMs < thresholdMs) {
+      return;
+    }
+
+    this.logger.warn({ staleMs, thresholdMs }, "Discord connector remained not-ready for too long; forcing reconnect");
+    await this.forceReconnect("watchdog_not_ready");
+  }
+
+  private async forceReconnect(reason: string): Promise<void> {
+    if (this.stopped || this.reconnectInFlight || !this.botToken) {
+      return;
+    }
+
+    this.reconnectInFlight = true;
+    const previousClient = this.client;
+
+    try {
+      if (previousClient) {
+        previousClient.removeAllListeners();
+        previousClient.destroy();
+      }
+
+      this.botUserId = null;
+      this.lastHealthyAtMs = Date.now();
+
+      const nextClient = this.createClient();
+      this.client = nextClient;
+      this.bindClientEventHandlers(nextClient);
+      await nextClient.login(this.botToken);
+      this.logger.info({ reason }, "Discord reconnect login submitted");
+    } catch (error) {
+      this.logger.error({ err: error, reason }, "Failed to force Discord reconnect");
+    } finally {
+      this.reconnectInFlight = false;
+    }
+  }
+
+  private parseCloseEvent(event: unknown): Record<string, unknown> {
+    if (!isRecord(event)) return {};
+    const result: Record<string, unknown> = {};
+    if (typeof event.code === "number") result.code = event.code;
+    if (typeof event.reason === "string" && event.reason.length > 0) result.reason = event.reason;
+    if (typeof event.wasClean === "boolean") result.wasClean = event.wasClean;
+    return result;
   }
 
   private async fetchTextChannel(channelId: string): Promise<SendableChannels> {

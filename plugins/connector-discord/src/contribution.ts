@@ -6,6 +6,8 @@ const discordConnectorConfigSchema = z.object({
   botTokenEnv: z.string().min(1).default("DISCORD_BOT_TOKEN"),
   allowDirectMessages: z.boolean().default(true),
   allowedGuildIds: z.array(z.string()).default([]),
+  reconnectStaleMs: z.number().int().positive().default(60_000),
+  reconnectCheckIntervalMs: z.number().int().positive().default(10_000),
 });
 
 export const connectorDiscordContribution: ConnectorContributionModule = {

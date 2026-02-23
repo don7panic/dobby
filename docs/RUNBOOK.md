@@ -1,6 +1,7 @@
-# im-agent-gateway 操作手册
+# im-agent-gateway 操作手册（v3）
 
-本文档用于把项目在本机跑起来，并完成最小可用验证。
+本文档用于在本机启动 `im-agent-gateway` 并完成最小验收。  
+当前配置模型是扩展系统 v3，默认 sandbox 为 `host.builtin`。
 
 ## 1. 前置条件
 
@@ -8,8 +9,7 @@
 2. 已安装 npm。
 3. 已创建 Discord Bot，并拿到 Token。
 4. Discord Bot 已开启 `MESSAGE CONTENT INTENT`，并被邀请到目标服务器。
-5. 已准备至少一个本地项目目录（作为 `projectRoot`）。
-6. 已准备可用的模型配置（`agent.provider` + `agent.model`），否则启动会报 model not found。
+5. 已准备至少一个本地项目目录（作为 route 的 `projectRoot`）。
 
 ## 2. 初始化项目
 
@@ -20,9 +20,9 @@ npm install
 npm run check
 ```
 
-## 3. 配置环境变量
+## 3. 环境变量
 
-先复制示例文件：
+复制示例：
 
 ```bash
 cp .env.example .env
@@ -35,7 +35,11 @@ DISCORD_BOT_TOKEN=你的真实Token
 LOG_LEVEL=info
 ```
 
-重要：当前代码不会自动读取 `.env`，启动前请把变量导入当前 shell：
+说明：
+1. `npm run start -- --config ...` 不会自动加载 `.env`，请先导出变量。
+2. `npm run start:local -- --config ...` 会通过 `--env-file-if-exists=.env` 自动加载。
+
+手动导出方式：
 
 ```bash
 set -a
@@ -43,148 +47,136 @@ source .env
 set +a
 ```
 
-## 4. 配置路由与模型
-
-先复制示例配置：
+## 4. 准备配置文件
 
 ```bash
 cp config/gateway.example.json config/gateway.json
 cp config/models.custom.example.json config/models.custom.json
 ```
 
+## 5. 关键配置说明（v3）
+
 编辑 `/Users/oasis/workspace/im-agent-gateway/config/gateway.json`。
 
-必须改的内容：
+必须检查：
+1. `extensions.allowList`：声明启用的扩展包（仅声明启用，不等于已安装）。
+2. `providers.instances`：至少有一个 provider 实例，并与 `providers.defaultProviderId` 对应。
+3. `connectors.instances`：至少有一个 connector 实例（Discord）。
+4. `routing.channelMap`：`connectorId -> channelId -> routeId` 映射。
+5. `routing.routes.*.projectRoot`：改成你机器上的真实目录。
+6. `routing.routes.*.providerId`：指向已定义 provider 实例。
+7. `routing.routes.*.sandboxId`：可省略；省略时走默认 sandbox。
 
-1. `routing.channelMap`：把 Discord 频道 ID 映射到 route。
-2. `routing.routes.*.projectRoot`：改成你机器上的真实目录。
-3. `routing.routes.*.systemPromptFile`：改成真实文件路径，或先删掉该字段。
-4. `agent.provider` / `agent.model`：改成你本机可用的 provider/model。
+默认 sandbox：
+1. 全局默认是 `sandboxes.defaultSandboxId = "host.builtin"`。
+2. route 里若显式写 `sandboxId`，则按 route 覆盖。
 
-如果使用自定义模型注册表，再编辑 `/Users/oasis/workspace/im-agent-gateway/config/models.custom.json`：
-1. `baseUrl`
-2. `models`
-
-注意：
-
-1. 线程消息会按父频道路由，`channelMap` 应填父频道 ID。
-2. `allowMentionsOnly: true` 时，群聊里必须 @bot 才会触发。
-
-## 5. 先跑通（推荐先用 host）
-
-为了先验证链路，建议先改成 host sandbox：
+当前默认示例（推荐）：
 
 ```json
-"sandbox": {
-  "backend": "host"
+"sandboxes": {
+  "defaultSandboxId": "host.builtin",
+  "instances": {}
 }
 ```
 
-启动：
+## 6. 扩展安装
+
+首次运行前，需把 allowList 里的扩展安装到 extension store（`data/extensions`）：
+
+```bash
+npm run start -- extension install @im-agent-gateway/provider-pi --config ./config/gateway.json
+npm run start -- extension install @im-agent-gateway/connector-discord --config ./config/gateway.json
+```
+
+可选扩展：
+
+```bash
+npm run start -- extension install @im-agent-gateway/provider-claude --config ./config/gateway.json
+npm run start -- extension install @im-agent-gateway/sandbox-core --config ./config/gateway.json
+```
+
+查看已安装扩展：
+
+```bash
+npm run start -- extension list --config ./config/gateway.json
+```
+
+## 7. 启动网关
 
 ```bash
 npm run build
 npm run start -- --config ./config/gateway.json
 ```
 
-## 6. 切换到 Docker（MVP 默认）
-
-确认 `config/gateway.json`：
-
-1. `sandbox.backend = "docker"`
-2. `sandbox.docker.hostWorkspaceRoot` 包含所有 `projectRoot`
-3. `sandbox.docker.containerWorkspaceRoot` 与容器挂载路径一致（常用 `/workspace`）
-
-示例（仅示意）：
+或：
 
 ```bash
-docker run -dit --name im-agent-sandbox \
-  -v /Users/you/workspace:/workspace \
-  -w /workspace \
-  ubuntu:24.04 sh
+npm run start:local -- --config ./config/gateway.json
 ```
 
-然后重启网关。
+## 8. 最小验收
 
-## 6.5 切换到 BoxLite（可选）
+启动成功后，日志应包含：
+1. `Extension packages loaded`
+2. `Discord connector ready`
+3. `Gateway started`
 
-确认 `config/gateway.json`：
+在 Discord 中验证：
+1. 在已映射频道发送消息（群聊若 `allowMentionsOnly=true` 需 @bot）。
+2. Bot 先回复 `_Thinking..._`，随后流式更新。
+3. 发送 `stop` 可中断当前运行。
 
-1. `sandbox.backend = "boxlite"`
-2. `sandbox.boxlite.workspaceRoot` 覆盖所有 `routing.routes.*.projectRoot`
-3. `sandbox.boxlite.containerWorkspaceRoot` 与容器内工作目录一致（默认 `/workspace`）
-4. 可选字段：
-   - `image`（默认 `alpine:latest`）
-   - `cpus` / `memoryMib`
-   - `reuseMode`（`conversation` 或 `workspace`，默认 `conversation`）
-   - `autoRemove`（默认 `true`）
-   - `securityProfile`（`development`/`standard`/`maximum`，默认 `maximum`）
+## 9. 切换到 Docker / BoxLite（可选）
 
-示例（仅示意）：
+如果需要容器沙箱，不再使用 `sandbox.backend` 字段，而是通过扩展实例配置：
+
+1. 安装 `@im-agent-gateway/sandbox-core`。
+2. 在 `sandboxes.instances` 定义实例（如 `sandbox.docker` 或 `sandbox.boxlite`）。
+3. 将 `sandboxes.defaultSandboxId` 或 `routing.routes.*.sandboxId` 指向对应实例。
+
+示意（只展示结构）：
 
 ```json
-"sandbox": {
-  "backend": "boxlite",
-  "boxlite": {
-    "workspaceRoot": "/Users/you/workspace",
-    "image": "alpine:latest",
-    "containerWorkspaceRoot": "/workspace",
-    "reuseMode": "conversation",
-    "autoRemove": true,
-    "securityProfile": "maximum"
+"sandboxes": {
+  "defaultSandboxId": "docker.main",
+  "instances": {
+    "docker.main": {
+      "contributionId": "sandbox.docker",
+      "config": {
+        "container": "im-agent-sandbox",
+        "hostWorkspaceRoot": "/Users/you/workspace",
+        "containerWorkspaceRoot": "/workspace"
+      }
+    }
   }
 }
 ```
 
-如果启动报 `Failed to initialize BoxLite runtime` 或 `Cannot find native binding`：
-
-```bash
-npm install @boxlite-ai/boxlite --registry=https://registry.npmjs.org
-```
-
-必要时补装平台包（例如 macOS ARM64）：
-
-```bash
-npm install @boxlite-ai/boxlite-darwin-arm64 --registry=https://registry.npmjs.org
-```
-
-## 7. 最小验收
-
-启动成功后，日志应出现：
-
-1. `Discord connector ready`
-2. `Gateway started`
-
-在 Discord 中验证：
-
-1. 在已映射频道 @bot 发送一条消息。
-2. Bot 回 `_Thinking..._` 并持续更新结果。
-3. 发送 `stop` 可中断当前会话。
-
-## 8. 数据与产物目录
+## 10. 数据目录
 
 运行后会自动创建：
-
 1. `/Users/oasis/workspace/im-agent-gateway/data/sessions`
 2. `/Users/oasis/workspace/im-agent-gateway/data/attachments`
 3. `/Users/oasis/workspace/im-agent-gateway/data/logs`
 4. `/Users/oasis/workspace/im-agent-gateway/data/state`
+5. `/Users/oasis/workspace/im-agent-gateway/data/extensions`
 
-## 9. 常见问题
+## 11. 常见问题
 
 1. `Discord bot token env 'DISCORD_BOT_TOKEN' is not set`
-   - 未导出环境变量，重新执行 `set -a; source .env; set +a`。
+   - 未导出环境变量，先执行 `set -a; source .env; set +a`，或使用 `npm run start:local`。
 
 2. `Configured model 'provider/model' not found`
-   - `agent.provider`/`agent.model` 与本机可用模型不一致。
+   - 检查 provider 实例中的 `provider/model/modelsFile` 是否和 `config/models.custom.json` 一致。
 
-3. `Docker container 'im-agent-sandbox' is not running`
-   - 容器不存在或未运行，先启动容器。
+3. `Extension package 'xxx' is not installed in '.../data/extensions'`
+   - 先执行 `npm run start -- extension install <package> --config ./config/gateway.json`。
 
-4. `Path '...' is outside docker hostWorkspaceRoot '...'`
-   - `projectRoot` 不在 `hostWorkspaceRoot` 下，调整配置。
+4. Docker 沙箱报 `container is not running` 或越界错误
+   - 检查 docker container 状态，以及 `hostWorkspaceRoot` 是否覆盖 route 的 `projectRoot`。
 
 5. 机器人在群里没反应
-   - 检查是否 @bot（当 `allowMentionsOnly=true`）。
-   - 检查频道是否在 `channelMap`。
-   - 检查 bot 在该频道是否有读写权限。
+   - 检查频道是否在 `routing.channelMap[connectorId]` 下。
+   - 检查是否需要 @bot（`allowMentionsOnly=true`）。
+   - 检查 bot 在频道内的读写权限与消息内容权限。
