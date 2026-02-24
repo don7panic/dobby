@@ -53,6 +53,8 @@ cp config/gateway.example.json config/gateway.json
 cp config/models.custom.example.json config/models.custom.json
 ```
 
+说明：示例配置默认 sandbox 为 `host.builtin`（见 `sandboxes.defaultSandboxId`）。
+
 4. 按需安装扩展（最小可运行）
 
 ```bash
@@ -72,6 +74,12 @@ npm run start -- extension install @im-agent-gateway/sandbox-core --config ./con
 ```bash
 export DISCORD_BOT_TOKEN=...
 npm run start -- --config ./config/gateway.json
+```
+
+或使用会自动加载 `.env` 的本地启动命令：
+
+```bash
+npm run start:local -- --config ./config/gateway.json
 ```
 
 ## 本地插件开发（plugins 目录）
@@ -119,6 +127,7 @@ npm run plugins:setup:local
 注意：
 - `allowList` 与安装状态分离。即使配置了 allowList，包未安装也会启动失败。
 - 扩展安装/卸载不会自动修改 `gateway.json`。
+- 默认 sandbox 是 `host.builtin`，可通过 `routing.routes.*.sandboxId` 覆盖到 docker/boxlite 实例。
 
 ## 插件契约（作者侧）
 
@@ -133,3 +142,8 @@ npm run plugins:setup:local
 npm run check
 npm run build
 ```
+
+## 进一步文档
+
+- 运行与排障手册：`/Users/oasis/workspace/im-agent-gateway/docs/RUNBOOK.md`
+- 扩展系统设计：`/Users/oasis/workspace/im-agent-gateway/docs/EXTENSION_SYSTEM_ARCHITECTURE.md`
