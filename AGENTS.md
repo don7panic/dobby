@@ -1,10 +1,10 @@
-# AGENTS Guide (im-agent-gateway)
+# AGENTS Guide (dobby)
 
 本文件给在本仓库内工作的 AI/自动化代理使用。目标是让改动与当前实现保持一致，减少“看起来合理但和代码无关”的输出。
 
 ## 1. 项目定位
 
-- 项目名：`im-agent-gateway`
+- 项目名：`dobby`
 - 形态：Discord-first 本地 Agent Gateway（扩展系统 v3）
 - 关键约束：
   - 独立仓库开发，不改 `pi-mono` 源码
@@ -126,11 +126,11 @@ npm run plugins:setup:local
 
 ## 7. 插件包契约（作者侧）
 
-- 插件包必须包含 `im-agent-gateway.manifest.json`
+- 插件包必须包含 `dobby.manifest.json`
 - `manifest.contributions[*].entry` 必须是包内已构建 JS（`.js/.mjs/.cjs`）
 - entry 必须位于包根目录内部（禁止路径越界）
 - 插件第三方依赖放在插件自身 `dependencies`
-- `@im-agent-gateway/plugin-sdk` 建议作为 `peerDependencies`（开发态可在 `devDependencies` 用 `file:../plugin-sdk`）
+- `@dobby/plugin-sdk` 建议作为 `peerDependencies`（开发态可在 `devDependencies` 用 `file:../plugin-sdk`）
 - 插件运行时不得依赖宿主源码路径或宿主构建产物路径
 
 ## 8. 改动建议

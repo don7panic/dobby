@@ -178,7 +178,7 @@ async function runGateway(startArgs: string[]): Promise<void> {
   await ensureDataDirs(config.data.rootDir);
 
   const logger = pino({
-    name: "im-agent-gateway",
+    name: "dobby",
     level: process.env.LOG_LEVEL ?? "info",
   });
 
@@ -269,7 +269,7 @@ async function runExtensionCommand(args: string[]): Promise<void> {
   const configPath = parseConfigPath(args.slice(1));
   const config = await loadGatewayConfig(configPath);
   const logger = pino({
-    name: "im-agent-gateway",
+    name: "dobby",
     level: process.env.LOG_LEVEL ?? "info",
   });
   const manager = new ExtensionStoreManager(logger, extensionStoreDir(config));
@@ -362,7 +362,7 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error) => {
-  const logger = pino({ name: "im-agent-gateway" });
+  const logger = pino({ name: "dobby" });
   logger.error({ err: error }, "Fatal startup error");
   process.exit(1);
 });

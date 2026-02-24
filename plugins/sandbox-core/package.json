@@ -1,5 +1,5 @@
 {
-  "name": "@im-agent-gateway/sandbox-core",
+  "name": "@dobby/sandbox-core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,15 +14,15 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@im-agent-gateway/plugin-sdk": "^0.1.0"
+    "@dobby/plugin-sdk": "^0.1.0"
   },
   "peerDependenciesMeta": {
-    "@im-agent-gateway/plugin-sdk": {
+    "@dobby/plugin-sdk": {
       "optional": true
     }
   },
   "devDependencies": {
-    "@im-agent-gateway/plugin-sdk": "file:../plugin-sdk",
+    "@dobby/plugin-sdk": "file:../plugin-sdk",
     "@types/node": "^22.10.5",
     "typescript": "^5.9.2"
   }

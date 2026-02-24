@@ -30,7 +30,7 @@ V3 将扩展系统对齐 VSCode extension 使用体验：
 
 ### 2.3 Manifest 约束
 
-- 扩展包必须包含 `im-agent-gateway.manifest.json`。
+- 扩展包必须包含 `dobby.manifest.json`。
 - `contributions[*].entry` 必须是插件包内构建好的 JS 入口（`.js/.mjs/.cjs`）。
 - entry 必须位于插件包根目录内部（禁止越界路径）。
 - 仓库里的 `plugins/*` 仅作源码参考，宿主不会回退加载这些源码路径。
@@ -81,7 +81,7 @@ V3 将扩展系统对齐 VSCode extension 使用体验：
 
 当 allowList 包无法解析时，直接启动失败，并输出明确命令：
 
-`im-agent-gateway extension install <package> --config <abs-config-path>`
+`dobby extension install <package> --config <abs-config-path>`
 
 ### 6.2 非法 manifest / entry
 
@@ -96,7 +96,7 @@ V3 将扩展系统对齐 VSCode extension 使用体验：
 ## 7. 插件包契约（发布侧）
 
 - 第三方依赖放在插件自身 `dependencies`。
-- `@im-agent-gateway/plugin-sdk` 作为插件契约依赖（通常 `peerDependencies`）。
+- `@dobby/plugin-sdk` 作为插件契约依赖（通常 `peerDependencies`）。
 - 开发态可通过 `devDependencies` 使用 `file:../plugin-sdk`，保证本地类型可用；运行态不依赖宿主回退。
 - 插件运行时不得依赖宿主源码路径或宿主 dist 路径。
 

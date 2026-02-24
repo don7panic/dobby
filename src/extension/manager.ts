@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import type { ExtensionManifest, GatewayLogger } from "../core/types.js";
 import { readExtensionManifest } from "./manifest.js";
 
-const STORE_PACKAGE_NAME = "im-agent-gateway-extension-store";
+const STORE_PACKAGE_NAME = "dobby-extension-store";
 
 interface StorePackageJson {
   name: string;
@@ -145,7 +145,7 @@ export class ExtensionStoreManager {
       const payload: StorePackageJson = {
         name: STORE_PACKAGE_NAME,
         private: true,
-        description: "Managed extension store for im-agent-gateway",
+        description: "Managed extension store for dobby",
       };
       await writeFile(storePackageJsonPath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
     }
@@ -241,7 +241,7 @@ export class ExtensionStoreManager {
     }
 
     const packageRoot = dirname(packageJsonPath);
-    const manifestPath = resolve(packageRoot, "im-agent-gateway.manifest.json");
+    const manifestPath = resolve(packageRoot, "dobby.manifest.json");
     const manifest = await readExtensionManifest(manifestPath);
 
     for (const contribution of manifest.contributions) {

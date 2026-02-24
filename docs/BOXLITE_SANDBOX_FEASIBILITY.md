@@ -1,7 +1,7 @@
-# BoxLite 作为 Sandbox 的可行性评估（im-agent-gateway）
+# BoxLite 作为 Sandbox 的可行性评估（dobby）
 
 更新时间：2026-02-17  
-适用版本：`im-agent-gateway` 当前 `main`、`@boxlite-ai/boxlite@0.2.11`
+适用版本：`dobby` 当前 `main`、`@boxlite-ai/boxlite@0.2.11`
 
 ## 1. 评估目标
 

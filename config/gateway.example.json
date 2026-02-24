@@ -2,11 +2,11 @@
   "extensions": {
     "allowList": [
       {
-        "package": "@im-agent-gateway/provider-pi",
+        "package": "@dobby/provider-pi",
         "enabled": true
       },
       {
-        "package": "@im-agent-gateway/connector-discord",
+        "package": "@dobby/connector-discord",
         "enabled": true
       }
     ]

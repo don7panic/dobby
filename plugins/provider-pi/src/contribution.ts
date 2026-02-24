@@ -30,7 +30,7 @@ import type {
   ProviderInstance,
   ProviderInstanceCreateOptions,
   ProviderRuntimeCreateOptions,
-} from "@im-agent-gateway/plugin-sdk";
+} from "@dobby/plugin-sdk";
 
 const BOXLITE_CONTEXT_CONVERSATION_KEY_ENV = "__IM_AGENT_BOXLITE_CONVERSATION_KEY";
 const BOXLITE_CONTEXT_PROJECT_ROOT_ENV = "__IM_AGENT_BOXLITE_PROJECT_ROOT";

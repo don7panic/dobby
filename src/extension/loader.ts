@@ -88,13 +88,13 @@ export class ExtensionLoader {
     } catch (error) {
       throw new Error(
         `Extension package '${packageName}' is not installed in '${this.options.extensionsDir}'. ` +
-        `Install it with: im-agent-gateway extension install ${packageName} --config ${this.options.configPath}. ` +
+        `Install it with: dobby extension install ${packageName} --config ${this.options.configPath}. ` +
         `Resolver error: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
 
     const packageRoot = dirname(packageJsonPath);
-    const manifestPath = resolve(join(packageRoot, "im-agent-gateway.manifest.json"));
+    const manifestPath = resolve(join(packageRoot, "dobby.manifest.json"));
     const manifest = await readExtensionManifest(manifestPath);
 
     const contributions: LoadedExtensionContribution[] = [];

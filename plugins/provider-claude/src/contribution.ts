@@ -26,7 +26,7 @@ import type {
   ProviderRuntimeCreateOptions,
   SpawnOptions as GatewaySpawnOptions,
   SpawnedProcess as GatewaySpawnedProcess,
-} from "@im-agent-gateway/plugin-sdk";
+} from "@dobby/plugin-sdk";
 
 const BOXLITE_CONTEXT_CONVERSATION_KEY_ENV = "__IM_AGENT_BOXLITE_CONVERSATION_KEY";
 const BOXLITE_CONTEXT_PROJECT_ROOT_ENV = "__IM_AGENT_BOXLITE_PROJECT_ROOT";
@@ -627,7 +627,7 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
 
   private buildSdkEnv(): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = {
-      CLAUDE_AGENT_SDK_CLIENT_APP: "im-agent-gateway/provider-claude",
+      CLAUDE_AGENT_SDK_CLIENT_APP: "dobby/provider-claude",
     };
 
     for (const key of this.providerConfig.envAllowList) {

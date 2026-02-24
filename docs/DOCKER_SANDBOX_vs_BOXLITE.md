@@ -1,4 +1,4 @@
-# Docker Sandboxes vs BoxLite 选型方案（面向 `im-agent-gateway`）
+# Docker Sandboxes vs BoxLite 选型方案（面向 `dobby`）
 
 ## 简要结论
 1. 结论：在你当前架构下，主选 `BoxLite`，保留现有 `docker` 后端作为回退；`Docker Sandboxes` 仅作为“开发机交互调试工具”可选。
@@ -23,7 +23,7 @@
 3. 不选主路径：`Docker Sandboxes` 不进入 `Executor` 主执行链路，仅用于开发者本机交互调试（可选）。
 
 推断说明：该结论基于你当前接口与调用链  
-`/Users/oasis/workspace/im-agent-gateway/src/sandbox/executor.ts:5`、`/Users/oasis/workspace/im-agent-gateway/src/sandbox/executor.ts:18`、`/Users/oasis/workspace/im-agent-gateway/src/agent/session-factory.ts:168`、`/Users/oasis/workspace/im-agent-gateway/src/core/types.ts:109`。
+`<repo-root>/src/sandbox/executor.ts:5`、`<repo-root>/src/sandbox/executor.ts:18`、`<repo-root>/src/agent/session-factory.ts:168`、`<repo-root>/src/core/types.ts:109`。
 
 ## 决策后实施规格（decision-complete）
 
@@ -72,6 +72,6 @@
 7. [Docker Sandboxes Advanced](https://docs.docker.com/ai/sandboxes/advanced/)
 8. [BoxLite Introduction](https://docs.boxlite.ai/introduction)
 9. [BoxLite BoxRun](https://docs.boxlite.ai/concepts/boxrun)
-10. `/Users/oasis/workspace/im-agent-gateway/docs/BOXLITE_SANDBOX_FEASIBILITY.md:19`
-11. `/Users/oasis/workspace/im-agent-gateway/src/sandbox/executor.ts:5`
-12. `/Users/oasis/workspace/im-agent-gateway/src/agent/session-factory.ts:168`
+10. `<repo-root>/docs/BOXLITE_SANDBOX_FEASIBILITY.md:19`
+11. `<repo-root>/src/sandbox/executor.ts:5`
+12. `<repo-root>/src/agent/session-factory.ts:168`

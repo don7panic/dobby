@@ -28,7 +28,7 @@ async function discoverLocalExtensionPackages() {
 
     const relativeDir = `plugins/${entry.name}`;
     const packageJsonPath = resolve(projectRoot, relativeDir, "package.json");
-    const manifestPath = resolve(projectRoot, relativeDir, "im-agent-gateway.manifest.json");
+    const manifestPath = resolve(projectRoot, relativeDir, "dobby.manifest.json");
 
     try {
       await access(packageJsonPath);

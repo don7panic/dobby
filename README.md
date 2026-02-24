@@ -1,4 +1,4 @@
-# im-agent-gateway
+# dobby
 
 Discord-first 本地 Agent Gateway（扩展系统 v3）。
 
@@ -58,15 +58,15 @@ cp config/models.custom.example.json config/models.custom.json
 4. 按需安装扩展（最小可运行）
 
 ```bash
-npm run start -- extension install @im-agent-gateway/provider-pi --config ./config/gateway.json
-npm run start -- extension install @im-agent-gateway/connector-discord --config ./config/gateway.json
+npm run start -- extension install @dobby/provider-pi --config ./config/gateway.json
+npm run start -- extension install @dobby/connector-discord --config ./config/gateway.json
 ```
 
 5. （可选）安装 Claude / sandbox 扩展
 
 ```bash
-npm run start -- extension install @im-agent-gateway/provider-claude --config ./config/gateway.json
-npm run start -- extension install @im-agent-gateway/sandbox-core --config ./config/gateway.json
+npm run start -- extension install @dobby/provider-claude --config ./config/gateway.json
+npm run start -- extension install @dobby/sandbox-core --config ./config/gateway.json
 ```
 
 6. 设置环境变量并启动
@@ -114,7 +114,7 @@ npm run plugins:setup:local
 ```
 
 说明：
-- `@im-agent-gateway/plugin-sdk` 在插件中按 `peerDependencies`（可选）声明，开发态通过 `devDependencies` 的 `file:../plugin-sdk` 解决类型依赖。
+- `@dobby/plugin-sdk` 在插件中按 `peerDependencies`（可选）声明，开发态通过 `devDependencies` 的 `file:../plugin-sdk` 解决类型依赖。
 - 运行态只加载 `<data.rootDir>/extensions/node_modules`，不会回退到宿主 `plugins/*`。
 - 示例配置 `config/gateway.json` 默认 `data.rootDir` 是 `./data`，因此扩展安装目录是 `./data/extensions`。
 
@@ -131,7 +131,7 @@ npm run plugins:setup:local
 
 ## 插件契约（作者侧）
 
-- 必须包含 `im-agent-gateway.manifest.json`。
+- 必须包含 `dobby.manifest.json`。
 - `manifest.contributions[*].entry` 必须指向插件包内构建好的 JS 文件（如 `./dist/contribution.js`）。
 - 插件第三方依赖必须放在插件自身 `dependencies`。
 - 插件实现不得依赖宿主源码路径或宿主构建产物路径。
@@ -145,5 +145,5 @@ npm run build
 
 ## 进一步文档
 
-- 运行与排障手册：`/Users/oasis/workspace/im-agent-gateway/docs/RUNBOOK.md`
-- 扩展系统设计：`/Users/oasis/workspace/im-agent-gateway/docs/EXTENSION_SYSTEM_ARCHITECTURE.md`
+- 运行与排障手册：`<repo-root>/docs/RUNBOOK.md`
+- 扩展系统设计：`<repo-root>/docs/EXTENSION_SYSTEM_ARCHITECTURE.md`

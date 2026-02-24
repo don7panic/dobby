@@ -3,7 +3,7 @@
 ## Summary
 最终落地决策如下：
 1. 不在 `pi-mono` 内开发 MVP，不修改其源码。
-2. 新建你自己的独立仓库（建议名：`im-agent-gateway`）。
+2. 新建你自己的独立仓库（建议名：`dobby`）。
 3. 通过 NPM 稳定版依赖 `@mariozechner/pi-*` 包。
 4. MVP 仅做 Discord。
 5. 架构采用 `Gateway Core + Connector 插件`，单进程运行。
@@ -12,12 +12,12 @@
 
 ## 1. 代码放置位置
 建议新目录（仓库外）：
-1. `~/workspace/im-agent-gateway`（或你的组织仓库）。
+1. `~/workspace/dobby`（或你的组织仓库）。
 2. `pi-mono` 作为只读参考，不参与提交。
 
 ## 2. 新仓库结构（MVP）
 ```text
-im-agent-gateway/
+dobby/
   package.json
   tsconfig.json
   .env.example

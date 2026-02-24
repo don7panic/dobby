@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { z } from "zod";
-import type { SandboxContributionModule } from "@im-agent-gateway/plugin-sdk";
+import type { SandboxContributionModule } from "@dobby/plugin-sdk";
 import { DockerExecutor } from "./docker-executor.js";
 
 const dockerSandboxConfigSchema = z.object({

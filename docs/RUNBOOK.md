@@ -1,11 +1,11 @@
-# im-agent-gateway 操作手册（v3）
+# dobby 操作手册（v3）
 
-本文档用于在本机启动 `im-agent-gateway` 并完成最小验收。  
+本文档用于在本机启动 `dobby` 并完成最小验收。  
 当前配置模型是扩展系统 v3，默认 sandbox 为 `host.builtin`。
 
 ## 1. 前置条件
 
-1. Node.js >= 20（见 `/Users/oasis/workspace/im-agent-gateway/package.json`）。
+1. Node.js >= 20（见 `<repo-root>/package.json`）。
 2. 已安装 npm。
 3. 已创建 Discord Bot，并拿到 Token。
 4. Discord Bot 已开启 `MESSAGE CONTENT INTENT`，并被邀请到目标服务器。
@@ -56,7 +56,7 @@ cp config/models.custom.example.json config/models.custom.json
 
 ## 5. 关键配置说明（v3）
 
-编辑 `/Users/oasis/workspace/im-agent-gateway/config/gateway.json`。
+编辑 `<repo-root>/config/gateway.json`。
 
 必须检查：
 1. `extensions.allowList`：声明启用的扩展包（仅声明启用，不等于已安装）。
@@ -85,15 +85,15 @@ cp config/models.custom.example.json config/models.custom.json
 首次运行前，需把 allowList 里的扩展安装到 extension store（`data/extensions`）：
 
 ```bash
-npm run start -- extension install @im-agent-gateway/provider-pi --config ./config/gateway.json
-npm run start -- extension install @im-agent-gateway/connector-discord --config ./config/gateway.json
+npm run start -- extension install @dobby/provider-pi --config ./config/gateway.json
+npm run start -- extension install @dobby/connector-discord --config ./config/gateway.json
 ```
 
 可选扩展：
 
 ```bash
-npm run start -- extension install @im-agent-gateway/provider-claude --config ./config/gateway.json
-npm run start -- extension install @im-agent-gateway/sandbox-core --config ./config/gateway.json
+npm run start -- extension install @dobby/provider-claude --config ./config/gateway.json
+npm run start -- extension install @dobby/sandbox-core --config ./config/gateway.json
 ```
 
 查看已安装扩展：
@@ -131,7 +131,7 @@ npm run start:local -- --config ./config/gateway.json
 
 如果需要容器沙箱，不再使用 `sandbox.backend` 字段，而是通过扩展实例配置：
 
-1. 安装 `@im-agent-gateway/sandbox-core`。
+1. 安装 `@dobby/sandbox-core`。
 2. 在 `sandboxes.instances` 定义实例（如 `sandbox.docker` 或 `sandbox.boxlite`）。
 3. 将 `sandboxes.defaultSandboxId` 或 `routing.routes.*.sandboxId` 指向对应实例。
 
@@ -156,11 +156,11 @@ npm run start:local -- --config ./config/gateway.json
 ## 10. 数据目录
 
 运行后会自动创建：
-1. `/Users/oasis/workspace/im-agent-gateway/data/sessions`
-2. `/Users/oasis/workspace/im-agent-gateway/data/attachments`
-3. `/Users/oasis/workspace/im-agent-gateway/data/logs`
-4. `/Users/oasis/workspace/im-agent-gateway/data/state`
-5. `/Users/oasis/workspace/im-agent-gateway/data/extensions`
+1. `<repo-root>/data/sessions`
+2. `<repo-root>/data/attachments`
+3. `<repo-root>/data/logs`
+4. `<repo-root>/data/state`
+5. `<repo-root>/data/extensions`
 
 ## 11. 常见问题
 
