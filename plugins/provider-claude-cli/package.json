@@ -1,0 +1,29 @@
+{
+  "name": "@dobby/provider-claude-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude CLI provider extension package",
+  "main": "./index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.53.0",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@dobby/plugin-sdk": "^0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@dobby/plugin-sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@dobby/plugin-sdk": "file:../plugin-sdk",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.9.2"
+  }
+}

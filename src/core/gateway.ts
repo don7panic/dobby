@@ -39,6 +39,8 @@ interface StopControlEvent {
   threadId?: string;
 }
 
+const INITIAL_REPLY_TIMEOUT_MS = 15_000;
+
 function isImageAttachment(attachment: InboundAttachment): boolean {
   return Boolean(attachment.mimeType?.startsWith("image/") && attachment.localPath);
 }
@@ -210,12 +212,50 @@ export class Gateway {
       "Processing inbound message",
     );
 
-    const initial = await connector.send({
-      ...this.outboundBaseFromInbound(message),
-      mode: "create",
-      replyToMessageId: message.messageId,
-      text: "_Thinking..._",
-    });
+    let initial: { messageId?: string };
+    try {
+      this.options.logger.info(
+        {
+          connectorId: message.connectorId,
+          routeId: route.routeId,
+          messageId: message.messageId,
+          timeoutMs: INITIAL_REPLY_TIMEOUT_MS,
+        },
+        "Sending initial thinking message",
+      );
+
+      initial = await this.withTimeout(
+        connector.send({
+          ...this.outboundBaseFromInbound(message),
+          mode: "create",
+          replyToMessageId: message.messageId,
+          text: "_Thinking..._",
+        }),
+        INITIAL_REPLY_TIMEOUT_MS,
+        "send initial thinking message",
+      );
+
+      this.options.logger.info(
+        {
+          connectorId: message.connectorId,
+          routeId: route.routeId,
+          messageId: message.messageId,
+          initialMessageId: initial.messageId ?? null,
+        },
+        "Initial thinking message sent",
+      );
+    } catch (error) {
+      this.options.logger.error(
+        {
+          err: error,
+          connectorId: message.connectorId,
+          routeId: route.routeId,
+          messageId: message.messageId,
+        },
+        "Failed to send initial thinking message",
+      );
+      return;
+    }
 
     const rootMessageId = initial.messageId ?? message.messageId;
     const forwarder = new EventForwarder(connector, message, rootMessageId, this.options.logger);
@@ -223,7 +263,25 @@ export class Gateway {
 
     try {
       const payload = await this.buildPromptPayload(message);
+      this.options.logger.info(
+        {
+          routeId: route.routeId,
+          messageId: message.messageId,
+          rootMessageId,
+          hasImages: payload.images.length > 0,
+          textLength: payload.text.length,
+        },
+        "Starting provider prompt",
+      );
       await runtime.prompt(payload.text, payload.images.length > 0 ? { images: payload.images } : undefined);
+      this.options.logger.info(
+        {
+          routeId: route.routeId,
+          messageId: message.messageId,
+          rootMessageId,
+        },
+        "Provider prompt finished",
+      );
       await forwarder.finalize();
       this.options.logger.info({ routeId: route.routeId, messageId: message.messageId }, "Inbound message processed");
     } catch (error) {
@@ -237,6 +295,23 @@ export class Gateway {
     } finally {
       unsubscribe();
     }
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error(`Timed out after ${timeoutMs}ms while attempting to ${label}`));
+        }, timeoutMs);
+
+        promise.finally(() => {
+          clearTimeout(timer);
+        }).catch(() => {
+          // Ignore; timeout race handles errors.
+        });
+      }),
+    ]);
   }
 
   private async buildPromptPayload(message: InboundEnvelope): Promise<PromptPayload> {

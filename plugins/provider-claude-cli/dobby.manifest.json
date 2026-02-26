@@ -1,0 +1,17 @@
+{
+  "apiVersion": "1.0",
+  "name": "@dobby/provider-claude-cli",
+  "version": "0.1.0",
+  "contributions": [
+    {
+      "id": "provider.claude-cli",
+      "kind": "provider",
+      "entry": "./dist/contribution.js",
+      "capabilities": {
+        "supportsStreaming": true,
+        "supportsAbort": true,
+        "supportsImages": true
+      }
+    }
+  ]
+}

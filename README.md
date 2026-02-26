@@ -66,8 +66,13 @@ npm run start -- extension install @dobby/connector-discord --config ./config/ga
 
 ```bash
 npm run start -- extension install @dobby/provider-claude --config ./config/gateway.json
+npm run start -- extension install @dobby/provider-claude-cli --config ./config/gateway.json
 npm run start -- extension install @dobby/sandbox-core --config ./config/gateway.json
 ```
+
+Claude provider 说明：
+- `provider.claude`（`@dobby/provider-claude`）：基于 Claude Agent SDK。
+- `provider.claude-cli`（`@dobby/provider-claude-cli`）：基于 Claude Code CLI（更接近原生 CLI 体验，当前为 host-only）。
 
 6. 设置环境变量并启动
 

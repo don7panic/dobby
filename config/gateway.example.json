@@ -8,6 +8,10 @@
       {
         "package": "@dobby/connector-discord",
         "enabled": true
+      },
+      {
+        "package": "@dobby/provider-claude-cli",
+        "enabled": false
       }
     ]
   },
@@ -57,6 +61,31 @@
         "maxConcurrentTurns": 1,
         "providerId": "pi.main",
         "sandboxId": "host.builtin"
+      }
+    }
+  },
+  "_examples": {
+    "providers": {
+      "instances": {
+        "claude-cli.main": {
+          "contributionId": "provider.claude-cli",
+          "config": {
+            "model": "claude-sonnet-4-5",
+            "maxTurns": 20,
+            "command": "claude",
+            "commandArgs": [],
+            "authMode": "auto",
+            "permissionMode": "bypassPermissions",
+            "streamVerbose": true
+          }
+        }
+      }
+    },
+    "routing": {
+      "routes": {
+        "projectA": {
+          "providerId": "claude-cli.main"
+        }
       }
     }
   },

@@ -93,8 +93,24 @@ npm run start -- extension install @dobby/connector-discord --config ./config/ga
 
 ```bash
 npm run start -- extension install @dobby/provider-claude --config ./config/gateway.json
+npm run start -- extension install @dobby/provider-claude-cli --config ./config/gateway.json
 npm run start -- extension install @dobby/sandbox-core --config ./config/gateway.json
 ```
+
+Claude provider 说明：
+1. `provider.claude`（`@dobby/provider-claude`）走 Claude Agent SDK。
+2. `provider.claude-cli`（`@dobby/provider-claude-cli`）走 Claude Code CLI（当前为 host-only）。
+
+若使用 `provider.claude-cli`，启动前建议检查：
+
+```bash
+claude --version
+claude auth status --json
+```
+
+说明：
+1. 若配置 `authMode=subscription`，`claude auth status --json` 需显示 `loggedIn: true`。
+2. 若配置 `authMode=apiKey`，需在网关启动环境提供 `ANTHROPIC_API_KEY`。
 
 查看已安装扩展：
 
