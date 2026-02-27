@@ -1,6 +1,6 @@
 {
   "apiVersion": "1.0",
-  "name": "@dobby/sandbox-core",
+  "name": "@dobby.ai/sandbox-core",
   "version": "0.1.0",
   "contributions": [
     {

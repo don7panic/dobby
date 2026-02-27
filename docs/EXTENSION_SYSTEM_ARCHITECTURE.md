@@ -96,7 +96,7 @@ V3 将扩展系统对齐 VSCode extension 使用体验：
 ## 7. 插件包契约（发布侧）
 
 - 第三方依赖放在插件自身 `dependencies`。
-- `@dobby/plugin-sdk` 作为插件契约依赖（通常 `peerDependencies`）。
+- `@dobby.ai/plugin-sdk` 作为插件契约依赖（通常 `peerDependencies`）。
 - 开发态可通过 `devDependencies` 使用 `file:../plugin-sdk`，保证本地类型可用；运行态不依赖宿主回退。
 - 插件运行时不得依赖宿主源码路径或宿主 dist 路径。
 
@@ -106,6 +106,7 @@ V3 将扩展系统对齐 VSCode extension 使用体验：
 - 宿主编译边界收敛到 `src/**/*.ts`。
 - 插件入口不再 `try src / catch dist`。
 - manifest entry 改为包内 dist JS。
+- 插件 npm scope 统一为 `@dobby.ai/*`（旧 `@dobby/*` 配置需手动迁移）。
 
 ## 9. 验收基线
 

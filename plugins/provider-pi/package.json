@@ -1,13 +1,14 @@
 {
-  "name": "@dobby/provider-pi",
+  "name": "@dobby.ai/provider-pi",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "description": "Built-in pi provider extension package",
   "main": "./index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "^0.53.0",
@@ -16,16 +17,24 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@dobby/plugin-sdk": "^0.1.0"
+    "@dobby.ai/plugin-sdk": "^0.1.0"
   },
   "peerDependenciesMeta": {
-    "@dobby/plugin-sdk": {
+    "@dobby.ai/plugin-sdk": {
       "optional": true
     }
   },
   "devDependencies": {
-    "@dobby/plugin-sdk": "file:../plugin-sdk",
+    "@dobby.ai/plugin-sdk": "file:../plugin-sdk",
     "@types/node": "^22.10.5",
     "typescript": "^5.9.2"
+  },
+  "files": [
+    "index.js",
+    "dist/",
+    "dobby.manifest.json"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

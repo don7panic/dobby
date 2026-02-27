@@ -14,7 +14,7 @@ import type {
   ConnectorSendResult,
   GatewayLogger,
   OutboundEnvelope,
-} from "@dobby/plugin-sdk";
+} from "@dobby.ai/plugin-sdk";
 import { mapDiscordMessage } from "./mapper.js";
 
 const DISCORD_MAX_CONTENT_LENGTH = 2000;

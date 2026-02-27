@@ -1,6 +1,6 @@
 {
   "apiVersion": "1.0",
-  "name": "@dobby/connector-discord",
+  "name": "@dobby.ai/connector-discord",
   "version": "0.1.0",
   "contributions": [
     {

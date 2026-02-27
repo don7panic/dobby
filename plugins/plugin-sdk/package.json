@@ -1,9 +1,22 @@
 {
-  "name": "@dobby/plugin-sdk",
+  "name": "@dobby.ai/plugin-sdk",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "description": "Public plugin contracts for dobby extensions",
   "main": "./index.js",
-  "types": "./index.d.ts"
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }

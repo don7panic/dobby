@@ -11,7 +11,7 @@ import type {
   ProviderInstance,
   ProviderInstanceCreateOptions,
   ProviderRuntimeCreateOptions,
-} from "@dobby/plugin-sdk";
+} from "@dobby.ai/plugin-sdk";
 
 const DEFAULT_ENV_ALLOW_LIST = [
   "ANTHROPIC_AUTH_TOKEN",

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { z } from "zod";
-import type { SandboxContributionModule } from "@dobby/plugin-sdk";
+import type { SandboxContributionModule } from "@dobby.ai/plugin-sdk";
 import { BoxliteExecutor } from "./boxlite-executor.js";
 
 const boxliteSandboxConfigSchema = z.object({

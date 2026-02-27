@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ConnectorContributionModule } from "@dobby/plugin-sdk";
+import type { ConnectorContributionModule } from "@dobby.ai/plugin-sdk";
 import { DiscordConnector, type DiscordConnectorConfig } from "./connector.js";
 
 const discordConnectorConfigSchema = z.object({

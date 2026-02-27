@@ -1,13 +1,14 @@
 {
-  "name": "@dobby/provider-claude",
+  "name": "@dobby.ai/provider-claude",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "description": "Claude Agent SDK provider extension package",
   "main": "./index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.0",
@@ -15,16 +16,24 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@dobby/plugin-sdk": "^0.1.0"
+    "@dobby.ai/plugin-sdk": "^0.1.0"
   },
   "peerDependenciesMeta": {
-    "@dobby/plugin-sdk": {
+    "@dobby.ai/plugin-sdk": {
       "optional": true
     }
   },
   "devDependencies": {
-    "@dobby/plugin-sdk": "file:../plugin-sdk",
+    "@dobby.ai/plugin-sdk": "file:../plugin-sdk",
     "@types/node": "^22.10.5",
     "typescript": "^5.9.2"
+  },
+  "files": [
+    "index.js",
+    "dist/",
+    "dobby.manifest.json"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

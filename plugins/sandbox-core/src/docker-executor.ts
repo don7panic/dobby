@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve, sep } from "node:path";
-import type { GatewayLogger } from "@dobby/plugin-sdk";
-import type { ExecOptions, ExecResult, Executor, SpawnOptions, SpawnedProcess } from "@dobby/plugin-sdk";
+import type { GatewayLogger } from "@dobby.ai/plugin-sdk";
+import type { ExecOptions, ExecResult, Executor, SpawnOptions, SpawnedProcess } from "@dobby.ai/plugin-sdk";
 
 export interface DockerConfig {
   container: string;

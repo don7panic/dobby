@@ -26,7 +26,7 @@ import type {
   ProviderRuntimeCreateOptions,
   SpawnOptions as GatewaySpawnOptions,
   SpawnedProcess as GatewaySpawnedProcess,
-} from "@dobby/plugin-sdk";
+} from "@dobby.ai/plugin-sdk";
 
 const BOXLITE_CONTEXT_CONVERSATION_KEY_ENV = "__IM_AGENT_BOXLITE_CONVERSATION_KEY";
 const BOXLITE_CONTEXT_PROJECT_ROOT_ENV = "__IM_AGENT_BOXLITE_PROJECT_ROOT";

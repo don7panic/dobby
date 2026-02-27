@@ -59,7 +59,7 @@ export function createPresetConfig(presetId: InitPresetId, context: InitPresetCo
   if (presetId === "discord-claude-cli") {
     return {
       id: presetId,
-      extensionPackages: ["@dobby/provider-claude-cli", "@dobby/connector-discord"],
+      extensionPackages: ["@dobby.ai/provider-claude-cli", "@dobby.ai/connector-discord"],
       providerInstanceId: "claude-cli.main",
       providerContributionId: "provider.claude-cli",
       providerConfig: {
@@ -91,7 +91,7 @@ export function createPresetConfig(presetId: InitPresetId, context: InitPresetCo
 
   return {
     id: "discord-pi",
-    extensionPackages: ["@dobby/provider-pi", "@dobby/connector-discord"],
+    extensionPackages: ["@dobby.ai/provider-pi", "@dobby.ai/connector-discord"],
     providerInstanceId: "pi.main",
     providerContributionId: "provider.pi",
     providerConfig: {

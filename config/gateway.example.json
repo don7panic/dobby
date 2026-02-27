@@ -2,15 +2,15 @@
   "extensions": {
     "allowList": [
       {
-        "package": "@dobby/provider-pi",
+        "package": "@dobby.ai/provider-pi",
         "enabled": true
       },
       {
-        "package": "@dobby/connector-discord",
+        "package": "@dobby.ai/connector-discord",
         "enabled": true
       },
       {
-        "package": "@dobby/provider-claude-cli",
+        "package": "@dobby.ai/provider-claude-cli",
         "enabled": false
       }
     ]

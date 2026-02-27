@@ -10,6 +10,7 @@
   - 独立仓库开发，不改 `pi-mono` 源码
   - 宿主只负责核心流程与扩展加载
   - Provider / Connector / Sandbox 通过扩展包贡献（contribution）接入
+  - 扩展 npm scope 使用 `@dobby.ai/*`（不再使用 `@dobby/*`）
   - 扩展运行时目录固定：`<data.rootDir>/extensions`
   - `extensions.allowList` 只声明启用，不负责安装
 
@@ -130,7 +131,7 @@ npm run plugins:setup:local
 - `manifest.contributions[*].entry` 必须是包内已构建 JS（`.js/.mjs/.cjs`）
 - entry 必须位于包根目录内部（禁止路径越界）
 - 插件第三方依赖放在插件自身 `dependencies`
-- `@dobby/plugin-sdk` 建议作为 `peerDependencies`（开发态可在 `devDependencies` 用 `file:../plugin-sdk`）
+- `@dobby.ai/plugin-sdk` 建议作为 `peerDependencies`（开发态可在 `devDependencies` 用 `file:../plugin-sdk`）
 - 插件运行时不得依赖宿主源码路径或宿主构建产物路径
 
 ## 8. 改动建议

@@ -3,6 +3,8 @@
 本文档用于在本机启动 `dobby` 并完成最小验收。  
 当前配置模型是扩展系统 v3，默认 sandbox 为 `host.builtin`。
 
+> Scope 变更说明：扩展包已硬切到 `@dobby.ai/*`。若你的旧配置仍使用 `@dobby/*`，请先手动替换后再执行安装/启动命令。
+
 ## 1. 前置条件
 
 1. Node.js >= 20（见 `<repo-root>/package.json`）。
@@ -85,21 +87,21 @@ cp config/models.custom.example.json config/models.custom.json
 首次运行前，需把 allowList 里的扩展安装到 extension store（`data/extensions`）：
 
 ```bash
-npm run start -- extension install @dobby/provider-pi --config ./config/gateway.json
-npm run start -- extension install @dobby/connector-discord --config ./config/gateway.json
+npm run start -- extension install @dobby.ai/provider-pi --config ./config/gateway.json
+npm run start -- extension install @dobby.ai/connector-discord --config ./config/gateway.json
 ```
 
 可选扩展：
 
 ```bash
-npm run start -- extension install @dobby/provider-claude --config ./config/gateway.json
-npm run start -- extension install @dobby/provider-claude-cli --config ./config/gateway.json
-npm run start -- extension install @dobby/sandbox-core --config ./config/gateway.json
+npm run start -- extension install @dobby.ai/provider-claude --config ./config/gateway.json
+npm run start -- extension install @dobby.ai/provider-claude-cli --config ./config/gateway.json
+npm run start -- extension install @dobby.ai/sandbox-core --config ./config/gateway.json
 ```
 
 Claude provider 说明：
-1. `provider.claude`（`@dobby/provider-claude`）走 Claude Agent SDK。
-2. `provider.claude-cli`（`@dobby/provider-claude-cli`）走 Claude Code CLI（当前为 host-only）。
+1. `provider.claude`（`@dobby.ai/provider-claude`）走 Claude Agent SDK。
+2. `provider.claude-cli`（`@dobby.ai/provider-claude-cli`）走 Claude Code CLI（当前为 host-only）。
 
 若使用 `provider.claude-cli`，启动前建议检查：
 
@@ -147,7 +149,7 @@ npm run start:local -- --config ./config/gateway.json
 
 如果需要容器沙箱，不再使用 `sandbox.backend` 字段，而是通过扩展实例配置：
 
-1. 安装 `@dobby/sandbox-core`。
+1. 安装 `@dobby.ai/sandbox-core`。
 2. 在 `sandboxes.instances` 定义实例（如 `sandbox.docker` 或 `sandbox.boxlite`）。
 3. 将 `sandboxes.defaultSandboxId` 或 `routing.routes.*.sandboxId` 指向对应实例。
 

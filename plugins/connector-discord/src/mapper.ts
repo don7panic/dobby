@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Message } from "discord.js";
-import type { GatewayLogger, InboundAttachment, InboundEnvelope } from "@dobby/plugin-sdk";
+import type { GatewayLogger, InboundAttachment, InboundEnvelope } from "@dobby.ai/plugin-sdk";
 
 function stripBotMention(text: string, botUserId: string): string {
   const mentionRegex = new RegExp(`<@!?${botUserId}>`, "g");

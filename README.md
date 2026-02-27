@@ -39,6 +39,12 @@ Discord-first 本地 Agent Gateway（扩展系统 v3）。
 - `extension list --config <path>`
 - `doctor [--fix]`
 
+## NPM Scope 变更（硬切）
+
+- 扩展包 scope 已统一为 `@dobby.ai/*`。
+- 旧 scope `@dobby/*` 不再保证可用。
+- 现有配置需手动替换 `extensions.allowList[*].package` 中的包名。
+
 ## 快速开始
 
 1. 安装宿主依赖
@@ -86,8 +92,8 @@ npm run start --
 5. （可选）安装并启用额外扩展
 
 ```bash
-dobby extension install @dobby/provider-claude-cli --enable
-dobby extension install @dobby/sandbox-core --enable
+dobby extension install @dobby.ai/provider-claude-cli --enable
+dobby extension install @dobby.ai/sandbox-core --enable
 ```
 
 运行前检查（推荐）：
@@ -131,7 +137,7 @@ npm run plugins:setup:local
 ```
 
 说明：
-- `@dobby/plugin-sdk` 在插件中按 `peerDependencies`（可选）声明，开发态通过 `devDependencies` 的 `file:../plugin-sdk` 解决类型依赖。
+- `@dobby.ai/plugin-sdk` 在插件中按 `peerDependencies`（可选）声明，开发态通过 `devDependencies` 的 `file:../plugin-sdk` 解决类型依赖。
 - 运行态只加载 `<data.rootDir>/extensions/node_modules`，不会回退到宿主 `plugins/*`。
 - 默认配置 `$HOME/.dobby/gateway.json` 的 `data.rootDir` 为 `./data`，因此默认扩展安装目录是 `$HOME/.dobby/data/extensions`。
 

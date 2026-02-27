@@ -3,9 +3,9 @@ import { EventEmitter } from "node:events";
 import { resolve, sep } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import type { SecurityOptions, SimpleBoxOptions } from "@boxlite-ai/boxlite";
-import type { GatewayLogger } from "@dobby/plugin-sdk";
+import type { GatewayLogger } from "@dobby.ai/plugin-sdk";
 import { BOXLITE_CONTEXT_CONVERSATION_KEY_ENV, BOXLITE_CONTEXT_PROJECT_ROOT_ENV } from "./boxlite-context.js";
-import type { ExecOptions, ExecResult, Executor, SpawnOptions, SpawnedProcess } from "@dobby/plugin-sdk";
+import type { ExecOptions, ExecResult, Executor, SpawnOptions, SpawnedProcess } from "@dobby.ai/plugin-sdk";
 
 export interface BoxliteConfig {
   workspaceRoot: string;

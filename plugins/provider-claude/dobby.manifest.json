@@ -1,6 +1,6 @@
 {
   "apiVersion": "1.0",
-  "name": "@dobby/provider-claude",
+  "name": "@dobby.ai/provider-claude",
   "version": "0.1.0",
   "contributions": [
     {

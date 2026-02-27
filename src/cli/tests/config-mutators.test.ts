@@ -9,11 +9,11 @@ import {
 
 test("upsertAllowListPackage is idempotent", () => {
   const config = ensureGatewayConfigShape({});
-  upsertAllowListPackage(config, "@dobby/provider-pi", true);
-  upsertAllowListPackage(config, "@dobby/provider-pi", true);
+  upsertAllowListPackage(config, "@dobby.ai/provider-pi", true);
+  upsertAllowListPackage(config, "@dobby.ai/provider-pi", true);
 
   assert.equal(config.extensions?.allowList?.length, 1);
-  assert.equal(config.extensions?.allowList?.[0]?.package, "@dobby/provider-pi");
+  assert.equal(config.extensions?.allowList?.[0]?.package, "@dobby.ai/provider-pi");
   assert.equal(config.extensions?.allowList?.[0]?.enabled, true);
 });
 
