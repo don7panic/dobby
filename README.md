@@ -31,6 +31,9 @@ Discord-first 本地 Agent Gateway（扩展系统 v3）。
 - `init`
 - `configure`
 - `config get|set|unset`
+- `bot list|set`
+- `channel list|set|unset`
+- `route list|set|remove`
 - `extension install <packageSpec> --config <path>`
 - `extension uninstall <packageName> --config <path>`
 - `extension list --config <path>`
@@ -54,6 +57,12 @@ npm run build
 
 ```bash
 dobby init --preset discord-pi
+```
+
+已有配置场景可用：
+
+```bash
+dobby init --merge --merge-strategy preserve
 ```
 
 如果你是从源码直接运行（未全局安装 `dobby`），可用：

@@ -12,8 +12,8 @@ import {
 } from "@clack/prompts";
 import { ExtensionStoreManager } from "../../extension/manager.js";
 import {
-  ensureDefaultProvider,
   ensureGatewayConfigShape,
+  setDefaultProviderIfMissingOrInvalid,
   setDefaultRoute,
   upsertAllowListPackage,
   upsertConnectorInstance,
@@ -44,11 +44,62 @@ interface InitInput {
   allowAllMessages: boolean;
 }
 
+type MergeStrategy = "preserve" | "overwrite" | "prompt";
+
+/**
+ * Type guard for supported init merge strategy values.
+ */
+function isMergeStrategy(value: string): value is MergeStrategy {
+  return value === "preserve" || value === "overwrite" || value === "prompt";
+}
+
 /**
  * Returns a trimmed string value when present, otherwise undefined.
  */
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/**
+ * Resolves merge strategy and prompts only when explicitly requested.
+ */
+async function resolveMergeStrategy(options: {
+  merge?: boolean;
+  mergeStrategy?: string;
+  overwrite?: boolean;
+  nonInteractive?: boolean;
+}, hasExistingConfig: boolean): Promise<"preserve" | "overwrite"> {
+  if (!hasExistingConfig || options.overwrite === true || options.merge !== true) {
+    return "overwrite";
+  }
+
+  const requested = (asString(options.mergeStrategy) ?? "preserve").toLowerCase();
+  if (!isMergeStrategy(requested)) {
+    throw new Error(`Unsupported --merge-strategy '${requested}'. Allowed: preserve, overwrite, prompt`);
+  }
+
+  if (requested !== "prompt") {
+    return requested;
+  }
+
+  if (options.nonInteractive === true) {
+    throw new Error("--merge-strategy prompt requires interactive mode");
+  }
+
+  const picked = await select({
+    message: "Existing values conflict with init preset. Choose merge strategy",
+    options: [
+      { value: "preserve", label: "preserve (keep existing values, only fill missing)" },
+      { value: "overwrite", label: "overwrite (replace conflicting values with preset)" },
+    ],
+    initialValue: "preserve",
+  });
+  if (isCancel(picked)) {
+    cancel("Initialization cancelled.");
+    throw new Error("Initialization cancelled.");
+  }
+
+  return String(picked) as "preserve" | "overwrite";
 }
 
 /**
@@ -226,6 +277,7 @@ export async function runInitCommand(options: {
   botToken?: string;
   allowAllMessages?: boolean;
   merge?: boolean;
+  mergeStrategy?: string;
   overwrite?: boolean;
   nonInteractive?: boolean;
   yes?: boolean;
@@ -242,6 +294,7 @@ export async function runInitCommand(options: {
       `Config '${configPath}' already exists. Use --merge to keep existing values or --overwrite to replace it.`,
     );
   }
+  const mergeStrategy = await resolveMergeStrategy(options, Boolean(existingConfig));
 
   const input = await collectInitInput(options);
   const preset = createPresetConfig(input.preset, {
@@ -265,7 +318,10 @@ export async function runInitCommand(options: {
   try {
     for (const packageName of preset.extensionPackages) {
       const installed = await manager.install(packageName);
-      upsertAllowListPackage(next, installed.packageName, true);
+      const hasAllowListEntry = next.extensions.allowList.some((item) => item.package === installed.packageName);
+      if (mergeStrategy === "overwrite" || !hasAllowListEntry) {
+        upsertAllowListPackage(next, installed.packageName, true);
+      }
     }
     installSpinner.stop("Extensions installed");
   } catch (error) {
@@ -273,15 +329,37 @@ export async function runInitCommand(options: {
     throw error;
   }
 
-  upsertProviderInstance(next, preset.providerInstanceId, preset.providerContributionId, preset.providerConfig);
-  upsertConnectorInstance(next, preset.connectorInstanceId, preset.connectorContributionId, preset.connectorConfig);
-  ensureDefaultProvider(next, preset.providerInstanceId);
+  const hasProviderInstance = Boolean(next.providers.instances[preset.providerInstanceId]);
+  if (mergeStrategy === "overwrite" || !hasProviderInstance) {
+    upsertProviderInstance(next, preset.providerInstanceId, preset.providerContributionId, preset.providerConfig);
+  }
 
-  upsertRoute(next, input.routeId, {
-    ...preset.routeProfile,
-    projectRoot: input.projectRoot,
-  });
-  setDefaultRoute(next, input.routeId);
+  const hasConnectorInstance = Boolean(next.connectors.instances[preset.connectorInstanceId]);
+  if (mergeStrategy === "overwrite" || !hasConnectorInstance) {
+    upsertConnectorInstance(next, preset.connectorInstanceId, preset.connectorContributionId, preset.connectorConfig);
+  }
+
+  if (mergeStrategy === "overwrite") {
+    next.providers = {
+      ...next.providers,
+      defaultProviderId: preset.providerInstanceId,
+      instances: next.providers.instances,
+    };
+  } else {
+    setDefaultProviderIfMissingOrInvalid(next);
+  }
+
+  const hasRoute = Boolean(next.routing.routes[input.routeId]);
+  if (mergeStrategy === "overwrite" || !hasRoute) {
+    upsertRoute(next, input.routeId, {
+      ...preset.routeProfile,
+      projectRoot: input.projectRoot,
+    });
+  }
+
+  if (mergeStrategy === "overwrite" || !next.routing.defaultRouteId) {
+    setDefaultRoute(next, input.routeId);
+  }
 
   await writeConfigWithValidation(configPath, next, {
     validate: true,
@@ -293,6 +371,9 @@ export async function runInitCommand(options: {
   }
 
   console.log(`Config written: ${configPath}`);
+  if (existingConfig && options.merge) {
+    console.log(`Merge strategy: ${mergeStrategy}`);
+  }
   console.log("Next steps:");
   console.log(`1. ${startCommandHint(configPath)}`);
 

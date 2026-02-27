@@ -30,6 +30,13 @@ import type { RawGatewayConfig } from "../shared/config-types.js";
 export type ConfigureSection = "provider" | "connector" | "routing" | "sandbox" | "data";
 
 const SECTION_VALUES: ConfigureSection[] = ["provider", "connector", "routing", "sandbox", "data"];
+const SECTION_ORDER: Record<ConfigureSection, number> = {
+  provider: 1,
+  routing: 2,
+  connector: 3,
+  sandbox: 4,
+  data: 5,
+};
 
 /**
  * Validates whether a string value is one of the supported configure sections.
@@ -74,6 +81,115 @@ function parseBotChannelMapText(raw: string): Record<string, string> {
   }
 
   return normalized;
+}
+
+/**
+ * Renders current channel mappings for guided editing notes.
+ */
+function formatBotChannelMap(botChannelMap: Record<string, string>): string {
+  const entries = Object.entries(botChannelMap).sort((a, b) => a[0].localeCompare(b[0]));
+  if (entries.length === 0) {
+    return "(empty)";
+  }
+
+  return entries.map(([channelId, routeId]) => `${channelId} -> ${routeId}`).join("\n");
+}
+
+/**
+ * Provides guided add/remove flow for editing Discord channel mappings.
+ */
+async function editBotChannelMapGuided(
+  existingMap: Record<string, string>,
+  knownRouteIds: string[],
+): Promise<Record<string, string>> {
+  const workingMap: Record<string, string> = { ...existingMap };
+  if (knownRouteIds.length === 0 && Object.keys(workingMap).length === 0) {
+    throw new Error("No routes found. Configure routing first.");
+  }
+
+  while (true) {
+    await note(formatBotChannelMap(workingMap), "Current botChannelMap");
+
+    const actionResult = await select({
+      message: "Edit botChannelMap",
+      options: [
+        { value: "upsert", label: "Add or update mapping" },
+        { value: "remove", label: "Remove mapping" },
+        { value: "done", label: "Done" },
+      ],
+      initialValue: "upsert",
+    });
+    if (isCancel(actionResult)) {
+      cancel("Configure cancelled.");
+      throw new Error("Configure cancelled.");
+    }
+    const action = String(actionResult);
+
+    if (action === "done") {
+      if (Object.keys(workingMap).length === 0) {
+        await note("Discord botChannelMap must include at least one channel mapping", "Validation");
+        continue;
+      }
+      return workingMap;
+    }
+
+    if (action === "remove") {
+      const channelChoices = Object.keys(workingMap).sort((a, b) => a.localeCompare(b));
+      if (channelChoices.length === 0) {
+        await note("No mapping to remove.", "Info");
+        continue;
+      }
+
+      const removeResult = await select({
+        message: "Select channel mapping to remove",
+        options: channelChoices.map((channelId) => ({
+          value: channelId,
+          label: `${channelId} -> ${workingMap[channelId]}`,
+        })),
+        initialValue: channelChoices[0],
+      });
+      if (isCancel(removeResult)) {
+        cancel("Configure cancelled.");
+        throw new Error("Configure cancelled.");
+      }
+
+      delete workingMap[String(removeResult)];
+      continue;
+    }
+
+    const channelId = await requiredText("Discord channel ID");
+    let routeId: string;
+    if (knownRouteIds.length > 0) {
+      const routeResult = await select({
+        message: "Route ID",
+        options: knownRouteIds.map((id) => ({ value: id, label: id })),
+        initialValue: knownRouteIds[0],
+      });
+      if (isCancel(routeResult)) {
+        cancel("Configure cancelled.");
+        throw new Error("Configure cancelled.");
+      }
+      routeId = String(routeResult);
+    } else {
+      routeId = await requiredText("Route ID");
+    }
+
+    workingMap[channelId] = routeId;
+  }
+}
+
+/**
+ * Deduplicates and reorders selected sections to honor dependency order.
+ */
+function normalizeSectionOrder(sections: ConfigureSection[]): ConfigureSection[] {
+  const unique: ConfigureSection[] = [];
+  for (const section of sections) {
+    if (!unique.includes(section)) {
+      unique.push(section);
+    }
+  }
+
+  return unique.sort((a, b) => SECTION_ORDER[a] - SECTION_ORDER[b]);
 }
 
 /**
@@ -261,17 +377,37 @@ async function configureConnectorSection(config: RawGatewayConfig): Promise<void
     }
 
     const existingChannelMap = normalizeDiscordBotChannelMap(existing?.config?.botChannelMap);
-    const channelMapInput = await text({
-      message: "Discord botChannelMap JSON (channelId -> routeId)",
-      initialValue: JSON.stringify(existingChannelMap, null, 2),
+    const knownRouteIds = Object.keys(next.routing?.routes ?? {}).sort((a, b) => a.localeCompare(b));
+    const channelMapModeResult = await select({
+      message: "Edit botChannelMap",
+      options: [
+        { value: "guided", label: "Guided editor (recommended)" },
+        { value: "json", label: "Raw JSON input" },
+      ],
+      initialValue: "guided",
     });
-    if (isCancel(channelMapInput)) {
+    if (isCancel(channelMapModeResult)) {
       cancel("Configure cancelled.");
       throw new Error("Configure cancelled.");
     }
 
-    const botChannelMap = parseBotChannelMapText(String(channelMapInput ?? "{}"));
-    const knownRoutes = new Set(Object.keys(next.routing?.routes ?? {}));
+    let botChannelMap: Record<string, string>;
+    if (channelMapModeResult === "guided") {
+      botChannelMap = await editBotChannelMapGuided(existingChannelMap, knownRouteIds);
+    } else {
+      const channelMapInput = await text({
+        message: "Discord botChannelMap JSON (channelId -> routeId)",
+        initialValue: JSON.stringify(existingChannelMap, null, 2),
+      });
+      if (isCancel(channelMapInput)) {
+        cancel("Configure cancelled.");
+        throw new Error("Configure cancelled.");
+      }
+
+      botChannelMap = parseBotChannelMapText(String(channelMapInput ?? "{}"));
+    }
+
+    const knownRoutes = new Set(knownRouteIds);
     for (const routeId of Object.values(botChannelMap)) {
       if (!knownRoutes.has(routeId)) {
         throw new Error(`Discord botChannelMap references unknown route '${routeId}'`);
@@ -524,7 +660,7 @@ async function resolveSections(sections: string[]): Promise<ConfigureSection[]> 
 }
 
 /**
- * Executes interactive config updates and validates each saved section.
+ * Executes interactive config updates and validates one final atomic save.
  */
 export async function runConfigureCommand(options: {
   config?: string;
@@ -535,7 +671,12 @@ export async function runConfigureCommand(options: {
   const next = ensureGatewayConfigShape(structuredClone(rawConfig));
 
   intro("dobby configure");
-  const sections = await resolveSections(options.sections);
+  const requestedSections = await resolveSections(options.sections);
+  const sections = normalizeSectionOrder(requestedSections);
+
+  if (sections.join(",") !== requestedSections.join(",")) {
+    await note(`Execution order: ${sections.join(" -> ")}`, "Info");
+  }
 
   for (const section of sections) {
     if (section === "provider") {
@@ -549,14 +690,14 @@ export async function runConfigureCommand(options: {
     } else if (section === "data") {
       await configureDataSection(next);
     }
-
-    await writeConfigWithValidation(configPath, next, {
-      validate: true,
-      createBackup: true,
-    });
-
-    await note(`Section '${section}' saved to ${configPath}`, "Saved");
+    await note(`Section '${section}' prepared`, "Updated");
   }
+
+  await writeConfigWithValidation(configPath, next, {
+    validate: true,
+    createBackup: true,
+  });
+  await note(`Saved to ${configPath}`, "Saved");
 
   outro("Configuration updated.");
 }
