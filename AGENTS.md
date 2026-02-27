@@ -48,7 +48,7 @@ npm run extensions:list:local
 npm run plugins:setup:local
 ```
 
-注意：代码不会自动加载 `.env`。运行前需手动导出环境变量（例如 `DISCORD_BOT_TOKEN`）。
+注意：代码不会自动加载 `.env`。当前 Discord connector 使用显式 `botToken` 配置，不依赖环境变量注入。
 
 ## 3. 代码结构与职责
 
@@ -86,7 +86,7 @@ npm run plugins:setup:local
 
 - `extensions.allowList[*].package` 若启用，必须可从 `<data.rootDir>/extensions/node_modules` 解析，否则启动 fail-fast
 - `providers/connectors/sandboxes.instances[*].contributionId` 必须存在于已加载贡献
-- `routing.channelMap[connectorId][channelId]` 必须指向存在的 `routing.routes[routeId]`
+- `connectors.instances.<id>.config.botChannelMap[channelId]` 必须指向存在的 `routing.routes[routeId]`
 - `routing.defaultRouteId` 若设置，必须存在于 `routing.routes`
 - 路由字段语义：
   - `projectRoot`: agent 运行目录边界
@@ -101,7 +101,7 @@ npm run plugins:setup:local
 
 - 会话串行粒度：`connectorId + platform + accountId + chatId + threadId(root)`，同会话必须顺序执行
 - 消息去重键：`connectorId + platform + accountId + chatId + messageId`
-- 线程路由规则：线程消息用父频道 ID 做路由（`routeChannelId`）
+- 线程路由规则：线程消息用父频道 ID 查 `botChannelMap`，得到 `routeId`
 - `stop` 文本（大小写不敏感）触发 `runtimeRegistry.abort`
 - 附件处理：
   - Discord 附件优先下载到 `data/attachments/...`

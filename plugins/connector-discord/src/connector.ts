@@ -22,9 +22,9 @@ const DEFAULT_RECONNECT_STALE_MS = 60_000;
 const DEFAULT_RECONNECT_CHECK_INTERVAL_MS = 10_000;
 
 export interface DiscordConnectorConfig {
-  botTokenEnv: string;
-  allowDirectMessages: boolean;
-  allowedGuildIds: string[];
+  botName: string;
+  botToken: string;
+  botChannelMap: Record<string, string>;
   reconnectStaleMs?: number;
   reconnectCheckIntervalMs?: number;
 }
@@ -83,9 +83,9 @@ export class DiscordConnector implements ConnectorPlugin {
       return;
     }
 
-    const token = process.env[this.config.botTokenEnv];
+    const token = this.config.botToken.trim();
     if (!token) {
-      throw new Error(`Discord bot token env '${this.config.botTokenEnv}' is not set`);
+      throw new Error("Discord bot token is empty");
     }
 
     this.ctx = ctx;
@@ -181,7 +181,14 @@ export class DiscordConnector implements ConnectorPlugin {
       if (client !== this.client || !client.user) return;
       this.botUserId = client.user.id;
       this.lastHealthyAtMs = Date.now();
-      this.logger.info({ userId: this.botUserId, userName: client.user.username }, "Discord connector ready");
+      this.logger.info(
+        {
+          userId: this.botUserId,
+          userName: client.user.username,
+          configuredBotName: this.config.botName,
+        },
+        "Discord connector ready",
+      );
     });
 
     client.on("shardDisconnect", (event, shardId) => {
@@ -226,15 +233,19 @@ export class DiscordConnector implements ConnectorPlugin {
     client.on("messageCreate", async (message: Message) => {
       if (client !== this.client || !client.user || !this.ctx || !this.botUserId) return;
 
-      if (message.guildId && this.config.allowedGuildIds.length > 0 && !this.config.allowedGuildIds.includes(message.guildId)) {
-        return;
-      }
-
-      if (!message.guildId && !this.config.allowDirectMessages) {
+      // v1 explicitly disables DM routing; only mapped guild channels are processed.
+      if (!message.guildId) {
         return;
       }
 
       if (message.author.bot) return;
+
+      const routeChannelId = message.channel.isThread() && message.channel.parentId ? message.channel.parentId : message.channelId;
+      const routeId = this.config.botChannelMap[routeChannelId];
+      if (!routeId) {
+        this.logger.debug({ connectorId: this.id, routeChannelId }, "Ignoring Discord message from unmapped channel");
+        return;
+      }
 
       if (message.content.trim().toLowerCase() === "stop") {
         await this.ctx.emitControl({
@@ -248,7 +259,15 @@ export class DiscordConnector implements ConnectorPlugin {
         return;
       }
 
-      const inbound = await mapDiscordMessage(message, this.id, this.botUserId, this.attachmentsRoot, this.logger);
+      const inbound = await mapDiscordMessage(
+        message,
+        this.id,
+        this.botUserId,
+        routeId,
+        routeChannelId,
+        this.attachmentsRoot,
+        this.logger,
+      );
       if (!inbound) return;
 
       await this.ctx.emitInbound(inbound);

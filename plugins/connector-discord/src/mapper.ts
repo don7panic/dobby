@@ -42,6 +42,8 @@ export async function mapDiscordMessage(
   message: Message,
   connectorId: string,
   botUserId: string,
+  routeId: string,
+  routeChannelId: string,
   attachmentsRoot: string,
   logger: GatewayLogger,
 ): Promise<InboundEnvelope | null> {
@@ -50,7 +52,6 @@ export async function mapDiscordMessage(
   const isDirectMessage = message.guildId == null;
   const mentionedBot = message.mentions.users.has(botUserId);
 
-  const routeChannelId = message.channel.isThread() && message.channel.parentId ? message.channel.parentId : message.channelId;
   const chatId = message.channelId;
   const threadId = message.channel.isThread() ? message.channelId : undefined;
 
@@ -82,6 +83,7 @@ export async function mapDiscordMessage(
     connectorId,
     platform: "discord",
     accountId: botUserId,
+    routeId,
     routeChannelId,
     chatId,
     messageId: message.id,

@@ -135,13 +135,13 @@ export class Gateway {
     }
     this.options.dedupStore.add(key);
 
-    const route = this.options.routeResolver.resolve(message.connectorId, message.routeChannelId);
+    const route = this.options.routeResolver.resolve(message.routeId);
     if (!route) {
       await connector.send({
         ...this.outboundBaseFromInbound(message),
         mode: "create",
         replyToMessageId: message.messageId,
-        text: "No route configured for this channel.",
+        text: `No route configured for route '${message.routeId}'.`,
       });
       return;
     }

@@ -34,9 +34,13 @@
       "discord.main": {
         "contributionId": "connector.discord",
         "config": {
-          "botTokenEnv": "DISCORD_BOT_TOKEN",
-          "allowDirectMessages": true,
-          "allowedGuildIds": []
+          "botName": "dobby-main",
+          "botToken": "REPLACE_WITH_DISCORD_BOT_TOKEN",
+          "botChannelMap": {
+            "YOUR_DISCORD_CHANNEL_ID_A": "projectA"
+          },
+          "reconnectStaleMs": 60000,
+          "reconnectCheckIntervalMs": 10000
         }
       }
     }
@@ -47,11 +51,6 @@
   },
   "routing": {
     "defaultRouteId": "projectA",
-    "channelMap": {
-      "discord.main": {
-        "YOUR_DISCORD_CHANNEL_ID_A": "projectA"
-      }
-    },
     "routes": {
       "projectA": {
         "projectRoot": "/Users/you/workspace/project-a",

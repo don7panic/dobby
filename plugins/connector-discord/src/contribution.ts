@@ -3,9 +3,9 @@ import type { ConnectorContributionModule } from "@dobby/plugin-sdk";
 import { DiscordConnector, type DiscordConnectorConfig } from "./connector.js";
 
 const discordConnectorConfigSchema = z.object({
-  botTokenEnv: z.string().min(1).default("DISCORD_BOT_TOKEN"),
-  allowDirectMessages: z.boolean().default(true),
-  allowedGuildIds: z.array(z.string()).default([]),
+  botName: z.string().min(1),
+  botToken: z.string().min(1),
+  botChannelMap: z.record(z.string(), z.string().min(1)),
   reconnectStaleMs: z.number().int().positive().default(60_000),
   reconnectCheckIntervalMs: z.number().int().positive().default(10_000),
 });

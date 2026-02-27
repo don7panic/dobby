@@ -22,6 +22,7 @@ export interface InboundEnvelope {
   platform: Platform;
   accountId: string;
   guildId?: string;
+  routeId: string;
   routeChannelId: string;
   chatId: string;
   threadId?: string;
@@ -100,7 +101,6 @@ export interface RouteProfile {
 
 export interface RoutingConfig {
   defaultRouteId?: string;
-  channelMap: Record<string, Record<string, string>>;
   routes: Record<string, RouteProfile>;
 }
 

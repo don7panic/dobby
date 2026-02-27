@@ -18,6 +18,7 @@ export interface InboundEnvelope {
   platform: Platform;
   accountId: string;
   guildId?: string;
+  routeId: string;
   routeChannelId: string;
   chatId: string;
   threadId?: string;

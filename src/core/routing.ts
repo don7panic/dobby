@@ -37,7 +37,6 @@ const routeProfileSchema = z.object({
 
 const routingSchema = z.object({
   defaultRouteId: z.string().min(1).optional(),
-  channelMap: z.record(z.string(), z.record(z.string(), z.string().min(1))),
   routes: z.record(z.string(), routeProfileSchema),
 });
 
@@ -72,6 +71,10 @@ const gatewayConfigSchema = z.object({
 
 type ParsedRouteProfile = z.infer<typeof routeProfileSchema>;
 type ParsedGatewayConfig = z.infer<typeof gatewayConfigSchema>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 function resolveMaybeAbsolute(baseDir: string, value: string): string {
   const expanded = expandHome(value);
@@ -158,10 +161,39 @@ function normalizeRouting(
   normalizedRoutes: Record<string, RouteProfile>,
 ): RoutingConfig {
   return {
-    channelMap: parsedRouting.channelMap,
     routes: normalizedRoutes,
     ...(parsedRouting.defaultRouteId ? { defaultRouteId: parsedRouting.defaultRouteId } : {}),
   };
+}
+
+function assertNoLegacyFields(rawConfig: unknown): void {
+  if (!isRecord(rawConfig)) {
+    return;
+  }
+
+  const rawRouting = rawConfig.routing;
+  if (isRecord(rawRouting) && Object.prototype.hasOwnProperty.call(rawRouting, "channelMap")) {
+    throw new Error(
+      "Legacy field 'routing.channelMap' is no longer supported. " +
+      "Move channel mappings into connectors.instances.<id>.config.botChannelMap.",
+    );
+  }
+
+  const rawConnectors = rawConfig.connectors;
+  const rawInstances = isRecord(rawConnectors) ? rawConnectors.instances : undefined;
+  if (!isRecord(rawInstances)) {
+    return;
+  }
+
+  for (const [instanceId, rawInstance] of Object.entries(rawInstances)) {
+    const rawConfigValue = isRecord(rawInstance) ? rawInstance.config : undefined;
+    if (isRecord(rawConfigValue) && Object.prototype.hasOwnProperty.call(rawConfigValue, "botTokenEnv")) {
+      throw new Error(
+        `Legacy field connectors.instances['${instanceId}'].config.botTokenEnv is no longer supported. ` +
+        "Use connectors.instances.<id>.config.botToken instead.",
+      );
+    }
+  }
 }
 
 function validateReferences(
@@ -181,17 +213,6 @@ function validateReferences(
     throw new Error(`routing.defaultRouteId '${parsed.routing.defaultRouteId}' does not exist in routing.routes`);
   }
 
-  for (const [connectorId, channelMappings] of Object.entries(parsed.routing.channelMap)) {
-    if (!parsed.connectors.instances[connectorId]) {
-      throw new Error(`routing.channelMap references unknown connector '${connectorId}'`);
-    }
-    for (const [channelId, routeId] of Object.entries(channelMappings)) {
-      if (!normalizedRoutes[routeId]) {
-        throw new Error(`routing.channelMap entry '${connectorId}/${channelId}' references unknown route '${routeId}'`);
-      }
-    }
-  }
-
   for (const [routeId, profile] of Object.entries(normalizedRoutes)) {
     const providerId = profile.providerId ?? parsed.providers.defaultProviderId;
     const sandboxId = profile.sandboxId ?? parsed.sandboxes.defaultSandboxId ?? BUILTIN_HOST_SANDBOX_ID;
@@ -208,7 +229,9 @@ export async function loadGatewayConfig(configPath: string): Promise<GatewayConf
   const absoluteConfigPath = resolve(configPath);
   const configDir = dirname(absoluteConfigPath);
   const raw = await readFile(absoluteConfigPath, "utf-8");
-  const parsed = gatewayConfigSchema.parse(JSON.parse(raw));
+  const parsedRaw = JSON.parse(raw) as unknown;
+  assertNoLegacyFields(parsedRaw);
+  const parsed = gatewayConfigSchema.parse(parsedRaw);
 
   const normalizedRoutes: Record<string, RouteProfile> = {};
   for (const [routeId, profile] of Object.entries(parsed.routing.routes)) {
@@ -239,14 +262,13 @@ export async function loadGatewayConfig(configPath: string): Promise<GatewayConf
 export class RouteResolver {
   constructor(private readonly routing: RoutingConfig) {}
 
-  resolve(connectorId: string, channelId: string): RouteResolution | null {
-    const perConnector = this.routing.channelMap[connectorId];
-    const routeId = perConnector?.[channelId] ?? this.routing.defaultRouteId;
-    if (!routeId) return null;
+  resolve(routeId: string): RouteResolution | null {
+    const normalizedRouteId = routeId.trim();
+    if (!normalizedRouteId) return null;
 
-    const profile = this.routing.routes[routeId];
+    const profile = this.routing.routes[normalizedRouteId];
     if (!profile) return null;
 
-    return { routeId, profile };
+    return { routeId: normalizedRouteId, profile };
   }
 }

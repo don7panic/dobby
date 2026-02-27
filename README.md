@@ -28,9 +28,13 @@ Discord-first 本地 Agent Gateway（扩展系统 v3）。
 网关二进制现在支持：
 
 - `start`（默认）
+- `init`
+- `configure`
+- `config get|set|unset`
 - `extension install <packageSpec> --config <path>`
 - `extension uninstall <packageName> --config <path>`
 - `extension list --config <path>`
+- `doctor [--fix]`
 
 ## 快速开始
 
@@ -46,46 +50,45 @@ npm install
 npm run build
 ```
 
-3. 准备配置
+3. 初始化配置（最小可运行）
 
 ```bash
-cp config/gateway.example.json config/gateway.json
-cp config/models.custom.example.json config/models.custom.json
+dobby init --preset discord-pi
 ```
 
-说明：示例配置默认 sandbox 为 `host.builtin`（见 `sandboxes.defaultSandboxId`）。
-
-4. 按需安装扩展（最小可运行）
+如果你是从源码直接运行（未全局安装 `dobby`），可用：
 
 ```bash
-npm run start -- extension install @dobby/provider-pi --config ./config/gateway.json
-npm run start -- extension install @dobby/connector-discord --config ./config/gateway.json
+npm run start -- init --preset discord-pi
 ```
 
-5. （可选）安装 Claude / sandbox 扩展
+4. 启动
 
 ```bash
-npm run start -- extension install @dobby/provider-claude --config ./config/gateway.json
-npm run start -- extension install @dobby/provider-claude-cli --config ./config/gateway.json
-npm run start -- extension install @dobby/sandbox-core --config ./config/gateway.json
+dobby start
 ```
 
-Claude provider 说明：
-- `provider.claude`（`@dobby/provider-claude`）：基于 Claude Agent SDK。
-- `provider.claude-cli`（`@dobby/provider-claude-cli`）：基于 Claude Code CLI（更接近原生 CLI 体验，当前为 host-only）。
-
-6. 设置环境变量并启动
+源码运行方式：
 
 ```bash
-export DISCORD_BOT_TOKEN=...
-npm run start -- --config ./config/gateway.json
+npm run start --
 ```
 
-或使用会自动加载 `.env` 的本地启动命令：
+5. （可选）安装并启用额外扩展
 
 ```bash
-npm run start:local -- --config ./config/gateway.json
+dobby extension install @dobby/provider-claude-cli --enable
+dobby extension install @dobby/sandbox-core --enable
 ```
+
+运行前检查（推荐）：
+
+```bash
+dobby doctor
+```
+
+默认配置文件路径为：`$HOME/.dobby/gateway.json`。如需兼容旧项目，可继续通过 `--config <path>` 指定任意路径。
+多 bot 场景建议为每个 Discord connector 实例配置独立的 `botName`、`botToken` 与 `botChannelMap`。
 
 ## 本地插件开发（plugins 目录）
 
@@ -121,13 +124,14 @@ npm run plugins:setup:local
 说明：
 - `@dobby/plugin-sdk` 在插件中按 `peerDependencies`（可选）声明，开发态通过 `devDependencies` 的 `file:../plugin-sdk` 解决类型依赖。
 - 运行态只加载 `<data.rootDir>/extensions/node_modules`，不会回退到宿主 `plugins/*`。
-- 示例配置 `config/gateway.json` 默认 `data.rootDir` 是 `./data`，因此扩展安装目录是 `./data/extensions`。
+- 默认配置 `$HOME/.dobby/gateway.json` 的 `data.rootDir` 为 `./data`，因此默认扩展安装目录是 `$HOME/.dobby/data/extensions`。
 
 ## 配置语义
 
 - `extensions.allowList`：声明“允许并启用”的扩展包。
 - `providers/connectors/sandboxes.instances`：实例化 contribution。
-- `routing`：绑定 channel -> route -> provider/sandbox。
+- `connectors.instances.<id>.config.botChannelMap`：绑定 channel -> route。
+- `routing`：定义 route -> provider/sandbox。
 
 注意：
 - `allowList` 与安装状态分离。即使配置了 allowList，包未安装也会启动失败。
