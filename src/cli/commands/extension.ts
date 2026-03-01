@@ -33,12 +33,11 @@ function extensionStoreDirFromRaw(configPath: string, rawConfig: RawGatewayConfi
  * Installs an extension package, optionally enabling it in config and creating instance templates.
  */
 export async function runExtensionInstallCommand(options: {
-  config?: string;
   spec: string;
   enable?: boolean;
   json?: boolean;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const logger = createLogger();
 
   const rawConfig = (await readRawConfig(configPath)) ?? {};
@@ -127,10 +126,9 @@ export async function runExtensionInstallCommand(options: {
  * Uninstalls an extension package from store without mutating config references.
  */
 export async function runExtensionUninstallCommand(options: {
-  config?: string;
   packageName: string;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const logger = createLogger();
   const rawConfig = await requireRawConfig(configPath);
   const manager = new ExtensionStoreManager(logger, extensionStoreDirFromRaw(configPath, rawConfig));
@@ -144,10 +142,9 @@ export async function runExtensionUninstallCommand(options: {
  * Lists installed extension packages with enablement and contribution reference status.
  */
 export async function runExtensionListCommand(options: {
-  config?: string;
   json?: boolean;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const logger = createLogger();
 
   const rawConfig = await requireRawConfig(configPath);

@@ -109,8 +109,8 @@ function selectSandboxInstances(config: Awaited<ReturnType<typeof loadGatewayCon
 /**
  * Starts the gateway runtime from config and wires graceful shutdown handlers.
  */
-export async function runStartCommand(options?: { config?: string }): Promise<void> {
-  const configPath = resolveConfigPath(options?.config);
+export async function runStartCommand(): Promise<void> {
+  const configPath = resolveConfigPath();
   const config = await loadGatewayConfig(configPath);
 
   await ensureDataDirs(config.data.rootDir);
@@ -118,7 +118,6 @@ export async function runStartCommand(options?: { config?: string }): Promise<vo
   const logger = createLogger();
   const loader = new ExtensionLoader(logger, {
     extensionsDir: extensionStoreDir(config),
-    configPath,
   });
 
   const loadedPackages = await loader.loadAllowList(config.extensions.allowList);

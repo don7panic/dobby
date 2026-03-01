@@ -4,7 +4,7 @@
 export const DISCORD_CONNECTOR_CONTRIBUTION_ID = "connector.discord";
 
 /**
- * Default connector instance id used by starter presets.
+ * Default connector instance id used by starter init flows.
  */
 export const DEFAULT_DISCORD_CONNECTOR_INSTANCE_ID = "discord.main";
 

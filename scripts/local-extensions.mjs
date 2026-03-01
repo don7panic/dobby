@@ -53,7 +53,7 @@ async function discoverLocalExtensionPackages() {
 }
 
 function printUsage() {
-  console.log("Usage: node scripts/local-extensions.mjs <command> [--config <path>]");
+  console.log("Usage: node scripts/local-extensions.mjs <command>");
   console.log("");
   console.log("Commands:");
   console.log("  install       Install local plugin development dependencies");
@@ -62,20 +62,6 @@ function printUsage() {
   console.log("  install-store Install local extension plugins into extension store");
   console.log("  list-store    List installed extensions from extension store");
   console.log("  setup         Run install + build + install-store");
-}
-
-function parseConfigPath(args) {
-  const flagIndex = args.findIndex((arg) => arg === "--config");
-  if (flagIndex === -1) {
-    return resolve(projectRoot, "config", "gateway.json");
-  }
-
-  const value = args[flagIndex + 1];
-  if (!value) {
-    throw new Error("Missing value for --config");
-  }
-
-  return resolve(projectRoot, value);
 }
 
 async function run(command, args) {
@@ -119,7 +105,7 @@ async function buildLocalPlugins(localExtensionPackages) {
   }
 }
 
-async function installToExtensionStore(localExtensionPackages, configPath) {
+async function installToExtensionStore(localExtensionPackages) {
   for (const item of localExtensionPackages) {
     await run(nodeCommand, [
       "--import",
@@ -128,25 +114,22 @@ async function installToExtensionStore(localExtensionPackages, configPath) {
       "extension",
       "install",
       `file:./${item.dir}`,
-      "--config",
-      configPath,
     ]);
   }
 }
 
-async function listExtensionStore(configPath) {
-  await run(nodeCommand, ["--import", "tsx", "src/main.ts", "extension", "list", "--config", configPath]);
+async function listExtensionStore() {
+  await run(nodeCommand, ["--import", "tsx", "src/main.ts", "extension", "list"]);
 }
 
 async function main() {
-  const [command, ...rest] = process.argv.slice(2);
+  const [command] = process.argv.slice(2);
 
   if (!command || command === "--help" || command === "-h") {
     printUsage();
     process.exit(command ? 0 : 1);
   }
 
-  const configPath = parseConfigPath(rest);
   const needsLocalPackages = command !== "list-store";
   const localExtensionPackages = needsLocalPackages ? await discoverLocalExtensionPackages() : [];
   if (needsLocalPackages && localExtensionPackages.length === 0) {
@@ -164,15 +147,15 @@ async function main() {
       await buildLocalPlugins(localExtensionPackages);
       return;
     case "install-store":
-      await installToExtensionStore(localExtensionPackages, configPath);
+      await installToExtensionStore(localExtensionPackages);
       return;
     case "list-store":
-      await listExtensionStore(configPath);
+      await listExtensionStore();
       return;
     case "setup":
       await installLocalPluginDeps(localExtensionPackages);
       await buildLocalPlugins(localExtensionPackages);
-      await installToExtensionStore(localExtensionPackages, configPath);
+      await installToExtensionStore(localExtensionPackages);
       return;
     default:
       throw new Error(`Unknown command '${command}'`);

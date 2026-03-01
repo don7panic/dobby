@@ -51,10 +51,9 @@ function resolveRouteProjectRoot(configPath: string, projectRoot: string): strin
  * Runs preflight diagnostics and optional conservative fixes for config/runtime consistency.
  */
 export async function runDoctorCommand(options: {
-  config?: string;
   fix?: boolean;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const issues: DoctorIssue[] = [];
 
   const rawConfig = await readRawConfig(configPath);

@@ -1,17 +1,56 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { parseConfigSetValue } from "../commands/config.js";
+import test from "node:test";
+import {
+  buildConfigListEntries,
+  CONFIG_SECTION_VALUES,
+  isConfigSection,
+  previewConfigValue,
+} from "../commands/config.js";
 
-test("parseConfigSetValue parses JSON5 by default", () => {
-  assert.deepEqual(parseConfigSetValue('{ foo: "bar" }'), { foo: "bar" });
-  assert.equal(parseConfigSetValue("123"), 123);
-  assert.equal(parseConfigSetValue("true"), true);
+test("isConfigSection accepts only supported top-level config sections", () => {
+  for (const section of CONFIG_SECTION_VALUES) {
+    assert.equal(isConfigSection(section), true);
+  }
+
+  assert.equal(isConfigSection("provider"), false);
+  assert.equal(isConfigSection("bot"), false);
 });
 
-test("parseConfigSetValue falls back to raw string when JSON5 parse fails", () => {
-  assert.equal(parseConfigSetValue("not-json"), "not-json");
+test("previewConfigValue returns stable compact previews", () => {
+  assert.equal(previewConfigValue("abc"), "\"abc\"");
+  assert.equal(previewConfigValue(123), "123");
+  assert.equal(previewConfigValue(true), "true");
+  assert.equal(previewConfigValue(null), "null");
+  assert.equal(previewConfigValue({ a: 1, b: 2, c: 3, d: 4 }), "{a, b, c, ...}");
 });
 
-test("parseConfigSetValue strict mode throws on invalid JSON5", () => {
-  assert.throws(() => parseConfigSetValue("not-json", true), /Failed to parse JSON5 value/);
+test("buildConfigListEntries summarizes object values with type and child counts", () => {
+  const entries = buildConfigListEntries({
+    providers: {
+      defaultProviderId: "pi.main",
+      instances: {
+        "pi.main": { contributionId: "provider.pi", config: {} },
+      },
+    },
+    featureFlag: true,
+  });
+
+  assert.deepEqual(
+    entries.map((entry) => ({ key: entry.key, type: entry.type, children: entry.children })),
+    [
+      { key: "featureFlag", type: "boolean", children: undefined },
+      { key: "providers", type: "object", children: 2 },
+    ],
+  );
+});
+
+test("buildConfigListEntries handles primitive roots", () => {
+  const entries = buildConfigListEntries("plain");
+  assert.deepEqual(entries, [
+    {
+      key: "(value)",
+      type: "string",
+      preview: "\"plain\"",
+    },
+  ]);
 });

@@ -167,25 +167,6 @@ export function upsertAllowListPackage(config: RawGatewayConfig, packageName: st
 }
 
 /**
- * Removes a package from allowList and reports whether removal happened.
- */
-export function removeAllowListPackage(config: RawGatewayConfig, packageName: string): boolean {
-  const next = ensureGatewayConfigShape(config);
-  const allowList = next.extensions.allowList;
-  const index = allowList.findIndex((item) => item.package === packageName);
-  if (index === -1) {
-    return false;
-  }
-
-  allowList.splice(index, 1);
-  config.extensions = {
-    ...next.extensions,
-    allowList,
-  };
-  return true;
-}
-
-/**
  * Derives a default instance id from contribution id.
  */
 function buildTemplateInstanceId(contributionId: string): string {
@@ -333,26 +314,6 @@ export function upsertConnectorInstance(
   };
   config.connectors = {
     ...next.connectors,
-    instances,
-  };
-}
-
-/**
- * Ensures providers.defaultProviderId points to an existing provider instance.
- */
-export function ensureDefaultProvider(config: RawGatewayConfig, fallbackProviderId: string): void {
-  const next = ensureGatewayConfigShape(config);
-  const defaultProviderId = next.providers.defaultProviderId;
-  const instances = next.providers.instances;
-
-  if (defaultProviderId && instances[defaultProviderId]) {
-    config.providers = next.providers;
-    return;
-  }
-
-  config.providers = {
-    ...next.providers,
-    defaultProviderId: fallbackProviderId,
     instances,
   };
 }

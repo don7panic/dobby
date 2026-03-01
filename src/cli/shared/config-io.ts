@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -5,7 +6,7 @@ import { loadGatewayConfig } from "../../core/routing.js";
 import type { RawGatewayConfig } from "./config-types.js";
 
 /**
- * Default config file path used by CLI commands when --config is omitted.
+ * Default config file path used by all CLI commands.
  */
 export const DEFAULT_CONFIG_PATH = resolve(homedir(), ".dobby", "gateway.json");
 
@@ -31,22 +32,101 @@ function dataBaseDir(configDir: string): string {
   return basename(configDir) === "config" ? resolve(configDir, "..") : configDir;
 }
 
+type ConfigPathSource = "env" | "repo" | "default";
+
+interface ConfigPathResolutionInput {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+interface ResolvedConfigPathInfo {
+  path: string;
+  source: ConfigPathSource;
+}
+
 /**
- * Resolves the config path from CLI input, falling back to the default home config.
+ * Returns true when a directory looks like the dobby repository root.
  */
-export function resolveConfigPath(configPath?: string): string {
-  if (configPath && configPath.trim().length > 0) {
-    return resolve(configPath);
+function isDobbyRepoRoot(candidateDir: string): boolean {
+  const packageJsonPath = resolve(candidateDir, "package.json");
+  const repoConfigPath = resolve(candidateDir, "config", "gateway.json");
+  const localExtensionsScriptPath = resolve(candidateDir, "scripts", "local-extensions.mjs");
+
+  if (!existsSync(packageJsonPath) || !existsSync(repoConfigPath) || !existsSync(localExtensionsScriptPath)) {
+    return false;
   }
 
-  return DEFAULT_CONFIG_PATH;
+  try {
+    const packageJsonRaw = readFileSync(packageJsonPath, "utf-8");
+    const parsed = JSON.parse(packageJsonRaw) as { name?: unknown };
+    return parsed.name === "dobby";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Scans current directory and ancestors to find a local dobby repo config path.
+ */
+function findDobbyRepoConfigPath(startDir: string): string | null {
+  let currentDir = resolve(startDir);
+
+  while (true) {
+    if (isDobbyRepoRoot(currentDir)) {
+      return resolve(currentDir, "config", "gateway.json");
+    }
+
+    const parentDir = dirname(currentDir);
+    if (parentDir === currentDir) {
+      return null;
+    }
+    currentDir = parentDir;
+  }
+}
+
+/**
+ * Resolves config path source by priority: env override -> local repo -> default home path.
+ */
+function resolveConfigPathInfo(input?: ConfigPathResolutionInput): ResolvedConfigPathInfo {
+  const env = input?.env ?? process.env;
+  const cwd = input?.cwd ?? process.cwd();
+  const rawOverride = env.DOBBY_CONFIG_PATH;
+  const override = typeof rawOverride === "string" ? rawOverride.trim() : "";
+
+  if (override.length > 0) {
+    const expanded = expandHome(override);
+    return {
+      path: isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded),
+      source: "env",
+    };
+  }
+
+  const localRepoConfigPath = findDobbyRepoConfigPath(cwd);
+  if (localRepoConfigPath) {
+    return {
+      path: localRepoConfigPath,
+      source: "repo",
+    };
+  }
+
+  return {
+    path: DEFAULT_CONFIG_PATH,
+    source: "default",
+  };
+}
+
+/**
+ * Resolves config path with dev-friendly detection and env override support.
+ */
+export function resolveConfigPath(input?: ConfigPathResolutionInput): string {
+  return resolveConfigPathInfo(input).path;
 }
 
 /**
  * Formats a user-facing init command hint for missing-config errors.
  */
-function initCommandHint(configPath: string): string {
-  return resolve(configPath) === DEFAULT_CONFIG_PATH ? "dobby init" : `dobby init --config ${configPath}`;
+function initCommandHint(): string {
+  return "dobby init";
 }
 
 /**
@@ -175,8 +255,17 @@ export async function writeConfigWithValidation(
 export async function requireRawConfig(configPath: string): Promise<RawGatewayConfig> {
   const raw = await readRawConfig(configPath);
   if (!raw) {
+    const resolvedConfigPath = resolve(configPath);
+    const currentResolution = resolveConfigPathInfo();
+    let sourceHint = "";
+    if (resolvedConfigPath === currentResolution.path && currentResolution.source === "env") {
+      sourceHint = ` Source: DOBBY_CONFIG_PATH='${process.env.DOBBY_CONFIG_PATH ?? ""}'.`;
+    } else if (resolvedConfigPath === currentResolution.path && currentResolution.source === "repo") {
+      sourceHint = " Source: detected dobby repo, using ./config/gateway.json.";
+    }
+
     throw new Error(
-      `Config '${resolve(configPath)}' does not exist. Run '${initCommandHint(configPath)}' first.`,
+      `Config '${resolvedConfigPath}' does not exist.${sourceHint} Run '${initCommandHint()}' first.`,
     );
   }
   return raw;

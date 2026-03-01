@@ -3,6 +3,7 @@ import {
   confirm,
   intro,
   isCancel,
+  multiselect,
   note,
   outro,
   password,
@@ -20,22 +21,28 @@ import {
   upsertProviderInstance,
   upsertRoute,
 } from "../shared/config-mutators.js";
+import { DEFAULT_DISCORD_BOT_NAME } from "../shared/discord-config.js";
 import {
-  DEFAULT_DISCORD_BOT_NAME,
-} from "../shared/discord-config.js";
-import {
-  DEFAULT_CONFIG_PATH,
   readRawConfig,
   resolveConfigPath,
   resolveDataRootDir,
   writeConfigWithValidation,
 } from "../shared/config-io.js";
 import type { RawGatewayConfig } from "../shared/config-types.js";
-import { createPresetConfig, isPresetId, listPresetIds, type InitPresetId } from "../shared/presets.js";
+import {
+  createInitSelectionConfig,
+  isInitConnectorChoiceId,
+  isInitProviderChoiceId,
+  listInitConnectorChoices,
+  listInitProviderChoices,
+  type InitConnectorChoiceId,
+  type InitProviderChoiceId,
+} from "../shared/init-catalog.js";
 import { createLogger } from "../shared/runtime.js";
 
 interface InitInput {
-  preset: InitPresetId;
+  providerChoiceIds: InitProviderChoiceId[];
+  connectorChoiceId: InitConnectorChoiceId;
   projectRoot: string;
   channelId: string;
   routeId: string;
@@ -67,7 +74,6 @@ async function resolveMergeStrategy(options: {
   merge?: boolean;
   mergeStrategy?: string;
   overwrite?: boolean;
-  nonInteractive?: boolean;
 }, hasExistingConfig: boolean): Promise<"preserve" | "overwrite"> {
   if (!hasExistingConfig || options.overwrite === true || options.merge !== true) {
     return "overwrite";
@@ -82,15 +88,11 @@ async function resolveMergeStrategy(options: {
     return requested;
   }
 
-  if (options.nonInteractive === true) {
-    throw new Error("--merge-strategy prompt requires interactive mode");
-  }
-
   const picked = await select({
-    message: "Existing values conflict with init preset. Choose merge strategy",
+    message: "Existing values conflict with init selection. Choose merge strategy",
     options: [
       { value: "preserve", label: "preserve (keep existing values, only fill missing)" },
-      { value: "overwrite", label: "overwrite (replace conflicting values with preset)" },
+      { value: "overwrite", label: "overwrite (replace conflicting values with init selection)" },
     ],
     initialValue: "preserve",
   });
@@ -132,79 +134,65 @@ async function promptRequiredText(params: {
 }
 
 /**
- * Collects init inputs from flags (non-interactive) or prompt flow (interactive).
+ * Collects init inputs from interactive prompts.
  */
-async function collectInitInput(
-  options: {
-    preset?: string;
-    projectRoot?: string;
-    channelId?: string;
-    routeId?: string;
-    botName?: string;
-    botToken?: string;
-    allowAllMessages?: boolean;
-    nonInteractive?: boolean;
-  },
-): Promise<InitInput> {
-  const nonInteractive = options.nonInteractive === true;
-
-  if (nonInteractive) {
-    const presetValue = options.preset ?? "discord-pi";
-    if (!isPresetId(presetValue)) {
-      throw new Error(`Unsupported preset '${presetValue}'. Available: ${listPresetIds().join(", ")}`);
-    }
-
-    const channelId = asString(options.channelId);
-    if (!channelId) {
-      throw new Error("--channel-id is required in --non-interactive mode");
-    }
-
-    const botToken = asString(options.botToken);
-    if (!botToken) {
-      throw new Error("--bot-token is required in --non-interactive mode");
-    }
-
-    return {
-      preset: presetValue,
-      projectRoot: asString(options.projectRoot) ?? process.cwd(),
-      channelId,
-      routeId: asString(options.routeId) ?? "main",
-      botName: asString(options.botName) ?? DEFAULT_DISCORD_BOT_NAME,
-      botToken,
-      allowAllMessages: options.allowAllMessages === true,
-    };
-  }
-
+async function collectInitInput(): Promise<InitInput> {
   intro("dobby init");
 
-  const presetResult = await select({
-    message: "Choose a starter preset",
-    options: [
-      { value: "discord-pi", label: "Discord + Pi provider" },
-      { value: "discord-claude-cli", label: "Discord + Claude CLI provider" },
-    ],
-    initialValue: isPresetId(options.preset ?? "") ? options.preset : "discord-pi",
+  const providerChoices = listInitProviderChoices();
+  const providerChoiceResult = await multiselect({
+    message: "Choose provider(s) (space to select multiple)",
+    options: providerChoices.map((item) => ({
+      value: item.id,
+      label: item.label,
+    })),
+    initialValues: ["provider.pi"],
+    required: true,
   });
-  if (isCancel(presetResult)) {
+  if (isCancel(providerChoiceResult)) {
     cancel("Initialization cancelled.");
     throw new Error("Initialization cancelled.");
+  }
+  const providerChoiceIds = (providerChoiceResult as unknown[]).map((value) => String(value));
+  if (providerChoiceIds.length === 0) {
+    throw new Error("At least one provider must be selected");
+  }
+  if (!providerChoiceIds.every((providerChoiceId) => isInitProviderChoiceId(providerChoiceId))) {
+    const invalidChoice = providerChoiceIds.find((providerChoiceId) => !isInitProviderChoiceId(providerChoiceId));
+    throw new Error(`Unsupported provider choice '${invalidChoice}'`);
+  }
+
+  const connectorChoices = listInitConnectorChoices();
+  const connectorChoiceResult = await select({
+    message: "Choose connector",
+    options: connectorChoices.map((item) => ({
+      value: item.id,
+      label: item.label,
+    })),
+    initialValue: "connector.discord",
+  });
+  if (isCancel(connectorChoiceResult)) {
+    cancel("Initialization cancelled.");
+    throw new Error("Initialization cancelled.");
+  }
+  const connectorChoiceId = String(connectorChoiceResult);
+  if (!isInitConnectorChoiceId(connectorChoiceId)) {
+    throw new Error(`Unsupported connector choice '${connectorChoiceId}'`);
   }
 
   const projectRoot = await promptRequiredText({
     message: "Project root",
-    initialValue: asString(options.projectRoot) ?? process.cwd(),
+    initialValue: process.cwd(),
   });
 
-  const channelIdInitial = asString(options.channelId);
   const channelId = await promptRequiredText({
     message: "Discord channel ID",
     placeholder: "1234567890",
-    ...(channelIdInitial ? { initialValue: channelIdInitial } : {}),
   });
 
   const routeIdResult = await text({
     message: "Route ID",
-    initialValue: asString(options.routeId) ?? "main",
+    initialValue: "main",
   });
   if (isCancel(routeIdResult)) {
     cancel("Initialization cancelled.");
@@ -213,7 +201,7 @@ async function collectInitInput(
 
   const botNameResult = await text({
     message: "Discord bot name",
-    initialValue: asString(options.botName) ?? DEFAULT_DISCORD_BOT_NAME,
+    initialValue: DEFAULT_DISCORD_BOT_NAME,
   });
   if (isCancel(botNameResult)) {
     cancel("Initialization cancelled.");
@@ -232,7 +220,7 @@ async function collectInitInput(
 
   const allowAllMessagesResult = await confirm({
     message: "Allow all group messages (not mention-only)?",
-    initialValue: options.allowAllMessages === true,
+    initialValue: false,
   });
   if (isCancel(allowAllMessagesResult)) {
     cancel("Initialization cancelled.");
@@ -240,7 +228,8 @@ async function collectInitInput(
   }
 
   return {
-    preset: String(presetResult) as InitPresetId,
+    providerChoiceIds: providerChoiceIds as InitProviderChoiceId[],
+    connectorChoiceId,
     projectRoot,
     channelId,
     routeId: String(routeIdResult ?? "").trim() || "main",
@@ -251,42 +240,18 @@ async function collectInitInput(
 }
 
 /**
- * Formats start command hints so default config path users can run bare "dobby start".
- */
-function startCommandHint(configPath: string): string {
-  return withConfigFlag("dobby start", configPath);
-}
-
-/**
- * Appends --config only when caller is not using the global default config path.
- */
-function withConfigFlag(command: string, configPath: string): string {
-  return configPath === DEFAULT_CONFIG_PATH ? command : `${command} --config ${configPath}`;
-}
-
-/**
- * Executes first-time initialization: install preset extensions, write config, then validate.
+ * Executes first-time initialization: install required extensions, write config, then validate.
  */
 export async function runInitCommand(options: {
-  config?: string;
-  preset?: string;
-  projectRoot?: string;
-  channelId?: string;
-  routeId?: string;
-  botName?: string;
-  botToken?: string;
-  allowAllMessages?: boolean;
   merge?: boolean;
   mergeStrategy?: string;
   overwrite?: boolean;
-  nonInteractive?: boolean;
-  yes?: boolean;
 }): Promise<void> {
   if (options.merge && options.overwrite) {
     throw new Error("--merge and --overwrite cannot be used together");
   }
 
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const existingConfig = await readRawConfig(configPath);
 
   if (existingConfig && !options.merge && !options.overwrite) {
@@ -296,8 +261,8 @@ export async function runInitCommand(options: {
   }
   const mergeStrategy = await resolveMergeStrategy(options, Boolean(existingConfig));
 
-  const input = await collectInitInput(options);
-  const preset = createPresetConfig(input.preset, {
+  const input = await collectInitInput();
+  const selected = createInitSelectionConfig(input.providerChoiceIds, input.connectorChoiceId, {
     routeId: input.routeId,
     projectRoot: input.projectRoot,
     allowAllMessages: input.allowAllMessages,
@@ -316,7 +281,7 @@ export async function runInitCommand(options: {
   const installSpinner = spinner();
   installSpinner.start("Installing required extensions");
   try {
-    for (const packageName of preset.extensionPackages) {
+    for (const packageName of selected.extensionPackages) {
       const installed = await manager.install(packageName);
       const hasAllowListEntry = next.extensions.allowList.some((item) => item.package === installed.packageName);
       if (mergeStrategy === "overwrite" || !hasAllowListEntry) {
@@ -329,20 +294,22 @@ export async function runInitCommand(options: {
     throw error;
   }
 
-  const hasProviderInstance = Boolean(next.providers.instances[preset.providerInstanceId]);
-  if (mergeStrategy === "overwrite" || !hasProviderInstance) {
-    upsertProviderInstance(next, preset.providerInstanceId, preset.providerContributionId, preset.providerConfig);
+  for (const provider of selected.providerInstances) {
+    const hasProviderInstance = Boolean(next.providers.instances[provider.instanceId]);
+    if (mergeStrategy === "overwrite" || !hasProviderInstance) {
+      upsertProviderInstance(next, provider.instanceId, provider.contributionId, provider.config);
+    }
   }
 
-  const hasConnectorInstance = Boolean(next.connectors.instances[preset.connectorInstanceId]);
+  const hasConnectorInstance = Boolean(next.connectors.instances[selected.connectorInstanceId]);
   if (mergeStrategy === "overwrite" || !hasConnectorInstance) {
-    upsertConnectorInstance(next, preset.connectorInstanceId, preset.connectorContributionId, preset.connectorConfig);
+    upsertConnectorInstance(next, selected.connectorInstanceId, selected.connectorContributionId, selected.connectorConfig);
   }
 
   if (mergeStrategy === "overwrite") {
     next.providers = {
       ...next.providers,
-      defaultProviderId: preset.providerInstanceId,
+      defaultProviderId: selected.providerInstanceId,
       instances: next.providers.instances,
     };
   } else {
@@ -352,7 +319,7 @@ export async function runInitCommand(options: {
   const hasRoute = Boolean(next.routing.routes[input.routeId]);
   if (mergeStrategy === "overwrite" || !hasRoute) {
     upsertRoute(next, input.routeId, {
-      ...preset.routeProfile,
+      ...selected.routeProfile,
       projectRoot: input.projectRoot,
     });
   }
@@ -366,31 +333,27 @@ export async function runInitCommand(options: {
     createBackup: Boolean(existingConfig),
   });
 
-  if (!options.nonInteractive) {
-    outro("Initialization completed.");
-  }
+  outro("Initialization completed.");
 
   console.log(`Config written: ${configPath}`);
   if (existingConfig && options.merge) {
     console.log(`Merge strategy: ${mergeStrategy}`);
   }
   console.log("Next steps:");
-  console.log(`1. ${startCommandHint(configPath)}`);
+  console.log("1. dobby start");
 
-  if (!options.nonInteractive && options.yes !== true) {
-    const showHint = await confirm({
-      message: "Show quick validation commands?",
-      initialValue: true,
-    });
+  const showHint = await confirm({
+    message: "Show quick validation commands?",
+    initialValue: true,
+  });
 
-    if (!isCancel(showHint) && showHint) {
-      await note(
-        [
-          withConfigFlag("dobby extension list", configPath),
-          withConfigFlag("dobby doctor", configPath),
-        ].join("\n"),
-        "Validation",
-      );
-    }
+  if (!isCancel(showHint) && showHint) {
+    await note(
+      [
+        "dobby extension list",
+        "dobby doctor",
+      ].join("\n"),
+      "Validation",
+    );
   }
 }

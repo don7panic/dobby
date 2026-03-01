@@ -30,13 +30,13 @@ Discord-first 本地 Agent Gateway（扩展系统 v3）。
 - `start`（默认）
 - `init`
 - `configure`
-- `config get|set|unset`
+- `config show|list|edit`
 - `bot list|set`
 - `channel list|set|unset`
 - `route list|set|remove`
-- `extension install <packageSpec> --config <path>`
-- `extension uninstall <packageName> --config <path>`
-- `extension list --config <path>`
+- `extension install <packageSpec>`
+- `extension uninstall <packageName>`
+- `extension list`
 - `doctor [--fix]`
 
 ## NPM Scope 变更（硬切）
@@ -44,6 +44,18 @@ Discord-first 本地 Agent Gateway（扩展系统 v3）。
 - 扩展包 scope 已统一为 `@dobby.ai/*`。
 - 旧 scope `@dobby/*` 不再保证可用。
 - 现有配置需手动替换 `extensions.allowList[*].package` 中的包名。
+
+## Config 命令变更（硬切）
+
+- 路径式命令已移除：`config get|set|unset`
+- 新命令：
+  - `config show [section] [--json]`
+  - `config list [section] [--json]`
+  - `config edit`
+- 映射关系：
+  - `config get ...` -> `config show` 或 `config list`
+  - `config set ...` -> `config edit`
+  - `config unset ...` -> 使用专用删除命令（如 `channel unset`、`route remove`、`extension uninstall`）
 
 ## 快速开始
 
@@ -62,8 +74,10 @@ npm run build
 3. 初始化配置（最小可运行）
 
 ```bash
-dobby init --preset discord-pi
+dobby init
 ```
+
+说明：`init` 现在会在交互中分开选择 provider 与 connector。
 
 已有配置场景可用：
 
@@ -74,7 +88,7 @@ dobby init --merge --merge-strategy preserve
 如果你是从源码直接运行（未全局安装 `dobby`），可用：
 
 ```bash
-npm run start -- init --preset discord-pi
+npm run start -- init
 ```
 
 4. 启动
@@ -102,7 +116,16 @@ dobby extension install @dobby.ai/sandbox-core --enable
 dobby doctor
 ```
 
-默认配置文件路径为：`$HOME/.dobby/gateway.json`。如需兼容旧项目，可继续通过 `--config <path>` 指定任意路径。
+配置路径优先级：
+1. `DOBBY_CONFIG_PATH`（若设置）
+2. 在 `dobby` 仓库内运行时自动使用 `./config/gateway.json`
+3. 默认 `~/.dobby/gateway.json`
+
+示例：
+
+```bash
+DOBBY_CONFIG_PATH=/tmp/gateway.dev.json npm run start -- config show providers --json
+```
 多 bot 场景建议为每个 Discord connector 实例配置独立的 `botName`、`botToken` 与 `botChannelMap`。
 
 ## 本地插件开发（plugins 目录）

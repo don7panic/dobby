@@ -18,12 +18,12 @@
     "start:local": "node --env-file-if-exists=.env dist/src/main.js",
     "check": "tsc --noEmit",
     "test:cli": "node --import tsx --test src/cli/tests/**/*.test.ts",
-    "plugins:install": "node scripts/local-extensions.mjs install --config ./config/gateway.json",
-    "plugins:check": "node scripts/local-extensions.mjs check --config ./config/gateway.json",
-    "plugins:build": "node scripts/local-extensions.mjs build --config ./config/gateway.json",
-    "extensions:install:local": "node scripts/local-extensions.mjs install-store --config ./config/gateway.json",
-    "extensions:list:local": "node scripts/local-extensions.mjs list-store --config ./config/gateway.json",
-    "plugins:setup:local": "node scripts/local-extensions.mjs setup --config ./config/gateway.json"
+    "plugins:install": "node scripts/local-extensions.mjs install",
+    "plugins:check": "node scripts/local-extensions.mjs check",
+    "plugins:build": "node scripts/local-extensions.mjs build",
+    "extensions:install:local": "node scripts/local-extensions.mjs install-store",
+    "extensions:list:local": "node scripts/local-extensions.mjs list-store",
+    "plugins:setup:local": "node scripts/local-extensions.mjs setup"
   },
   "dependencies": {
     "@clack/prompts": "^0.10.1",

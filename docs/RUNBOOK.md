@@ -38,8 +38,8 @@ LOG_LEVEL=info
 ```
 
 说明：
-1. `npm run start -- --config ...` 不会自动加载 `.env`，请先导出变量。
-2. `npm run start:local -- --config ...` 会通过 `--env-file-if-exists=.env` 自动加载。
+1. `npm run start --` 不会自动加载 `.env`，请先导出变量。
+2. `npm run start:local --` 会通过 `--env-file-if-exists=.env` 自动加载。
 
 手动导出方式：
 
@@ -51,10 +51,38 @@ set +a
 
 ## 4. 准备配置文件
 
+配置路径优先级：
+1. `DOBBY_CONFIG_PATH`（若设置）
+2. 在 `dobby` 仓库内运行时自动使用 `./config/gateway.json`
+3. 默认 `~/.dobby/gateway.json`
+
+示例（强制指定配置文件）：
+
+```bash
+DOBBY_CONFIG_PATH=/tmp/gateway.dev.json npm run start -- config show providers --json
+```
+
 ```bash
 cp config/gateway.example.json config/gateway.json
 cp config/models.custom.example.json config/models.custom.json
 ```
+
+### 4.1 CLI config 命令（硬切）
+
+`config` 已切换为交互与结构化查看，不再支持路径式 `get/set/unset`。
+
+可用命令：
+
+```bash
+dobby config show [section] [--json]
+dobby config list [section] [--json]
+dobby config edit
+```
+
+旧命令映射：
+1. `config get ...` -> `config show` 或 `config list`
+2. `config set ...` -> `config edit`
+3. `config unset ...` -> 使用专用删除命令（`channel unset`、`route remove`、`extension uninstall`）
 
 ## 5. 关键配置说明（v3）
 
@@ -64,7 +92,7 @@ cp config/models.custom.example.json config/models.custom.json
 1. `extensions.allowList`：声明启用的扩展包（仅声明启用，不等于已安装）。
 2. `providers.instances`：至少有一个 provider 实例，并与 `providers.defaultProviderId` 对应。
 3. `connectors.instances`：至少有一个 connector 实例（Discord）。
-4. `routing.channelMap`：`connectorId -> channelId -> routeId` 映射。
+4. `connectors.instances.<id>.config.botChannelMap`：`channelId -> routeId` 映射。
 5. `routing.routes.*.projectRoot`：改成你机器上的真实目录。
 6. `routing.routes.*.providerId`：指向已定义 provider 实例。
 7. `routing.routes.*.sandboxId`：可省略；省略时走默认 sandbox。
@@ -87,16 +115,16 @@ cp config/models.custom.example.json config/models.custom.json
 首次运行前，需把 allowList 里的扩展安装到 extension store（`data/extensions`）：
 
 ```bash
-npm run start -- extension install @dobby.ai/provider-pi --config ./config/gateway.json
-npm run start -- extension install @dobby.ai/connector-discord --config ./config/gateway.json
+npm run start -- extension install @dobby.ai/provider-pi
+npm run start -- extension install @dobby.ai/connector-discord
 ```
 
 可选扩展：
 
 ```bash
-npm run start -- extension install @dobby.ai/provider-claude --config ./config/gateway.json
-npm run start -- extension install @dobby.ai/provider-claude-cli --config ./config/gateway.json
-npm run start -- extension install @dobby.ai/sandbox-core --config ./config/gateway.json
+npm run start -- extension install @dobby.ai/provider-claude
+npm run start -- extension install @dobby.ai/provider-claude-cli
+npm run start -- extension install @dobby.ai/sandbox-core
 ```
 
 Claude provider 说明：
@@ -117,20 +145,20 @@ claude auth status --json
 查看已安装扩展：
 
 ```bash
-npm run start -- extension list --config ./config/gateway.json
+npm run start -- extension list
 ```
 
 ## 7. 启动网关
 
 ```bash
 npm run build
-npm run start -- --config ./config/gateway.json
+npm run start --
 ```
 
 或：
 
 ```bash
-npm run start:local -- --config ./config/gateway.json
+npm run start:local --
 ```
 
 ## 8. 最小验收
@@ -189,12 +217,12 @@ npm run start:local -- --config ./config/gateway.json
    - 检查 provider 实例中的 `provider/model/modelsFile` 是否和 `config/models.custom.json` 一致。
 
 3. `Extension package 'xxx' is not installed in '.../data/extensions'`
-   - 先执行 `npm run start -- extension install <package> --config ./config/gateway.json`。
+   - 先执行 `npm run start -- extension install <package>`。
 
 4. Docker 沙箱报 `container is not running` 或越界错误
    - 检查 docker container 状态，以及 `hostWorkspaceRoot` 是否覆盖 route 的 `projectRoot`。
 
 5. 机器人在群里没反应
-   - 检查频道是否在 `routing.channelMap[connectorId]` 下。
+   - 检查频道是否在 `connectors.instances.<id>.config.botChannelMap` 下。
    - 检查是否需要 @bot（`allowMentionsOnly=true`）。
    - 检查 bot 在频道内的读写权限与消息内容权限。

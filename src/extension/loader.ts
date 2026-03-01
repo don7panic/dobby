@@ -24,7 +24,6 @@ export interface LoadedExtensionPackage {
 
 interface ExtensionLoaderOptions {
   extensionsDir: string;
-  configPath: string;
 }
 
 function isJavaScriptEntry(entry: string): boolean {
@@ -88,7 +87,7 @@ export class ExtensionLoader {
     } catch (error) {
       throw new Error(
         `Extension package '${packageName}' is not installed in '${this.options.extensionsDir}'. ` +
-        `Install it with: dobby extension install ${packageName} --config ${this.options.configPath}. ` +
+        `Install it with: dobby extension install ${packageName}. ` +
         `Resolver error: ${error instanceof Error ? error.message : String(error)}`,
       );
     }

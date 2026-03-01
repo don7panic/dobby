@@ -1,84 +1,114 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
-import { runDoctorCommand } from "../commands/doctor.js";
 
 /**
- * Writes a temporary config file and returns its absolute path.
+ * Writes a temporary default config under HOME/.dobby/gateway.json.
  */
-async function writeTempConfig(payload: unknown): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "dobby-doctor-"));
-  const path = join(dir, "gateway.json");
-  await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
-  return path;
+async function writeTempHomeConfig(homeDir: string, payload: unknown): Promise<string> {
+  const dobbyDir = join(homeDir, ".dobby");
+  await mkdir(dobbyDir, { recursive: true });
+  const configPath = join(dobbyDir, "gateway.json");
+  await writeFile(configPath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
+  return configPath;
+}
+
+/**
+ * Runs `dobby doctor` in a child process with an isolated HOME directory.
+ */
+async function runDoctorWithHome(homeDir: string, configPath: string): Promise<{ code: number | null; output: string }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--import", "tsx", "src/main.ts", "doctor"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: homeDir,
+          DOBBY_CONFIG_PATH: configPath,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      output += String(chunk);
+    });
+
+    child.once("error", (error) => reject(error));
+    child.once("close", (code) => {
+      resolve({ code, output });
+    });
+  });
 }
 
 test("doctor reports invalid botChannelMap route references", async () => {
-  const configPath = await writeTempConfig({
-    extensions: { allowList: [] },
-    providers: {
-      defaultProviderId: "pi.main",
-      instances: {
-        "pi.main": {
-          contributionId: "provider.pi",
-          config: {},
+  const homeDir = await mkdtemp(join(tmpdir(), "dobby-doctor-home-"));
+
+  try {
+    const configPath = await writeTempHomeConfig(homeDir, {
+      extensions: { allowList: [] },
+      providers: {
+        defaultProviderId: "pi.main",
+        instances: {
+          "pi.main": {
+            contributionId: "provider.pi",
+            config: {},
+          },
         },
       },
-    },
-    connectors: {
-      instances: {
-        "discord.main": {
-          contributionId: "connector.discord",
-          config: {
-            botName: "dobby-main",
-            botToken: "token",
-            botChannelMap: {
-              "123": "missing-route",
+      connectors: {
+        instances: {
+          "discord.main": {
+            contributionId: "connector.discord",
+            config: {
+              botName: "dobby-main",
+              botToken: "token",
+              botChannelMap: {
+                "123": "missing-route",
+              },
             },
           },
         },
       },
-    },
-    sandboxes: {
-      defaultSandboxId: "host.builtin",
-      instances: {},
-    },
-    routing: {
-      defaultRouteId: "main",
-      routes: {
-        main: {
-          projectRoot: process.cwd(),
-          tools: "full",
-          allowMentionsOnly: true,
-          maxConcurrentTurns: 1,
-          providerId: "pi.main",
-          sandboxId: "host.builtin",
+      sandboxes: {
+        defaultSandboxId: "host.builtin",
+        instances: {},
+      },
+      routing: {
+        defaultRouteId: "main",
+        routes: {
+          main: {
+            projectRoot: process.cwd(),
+            tools: "full",
+            allowMentionsOnly: true,
+            maxConcurrentTurns: 1,
+            providerId: "pi.main",
+            sandboxId: "host.builtin",
+          },
         },
       },
-    },
-    data: {
-      rootDir: "./data",
-      dedupTtlMs: 604800000,
-    },
-  });
+      data: {
+        rootDir: "./data",
+        dedupTtlMs: 604800000,
+      },
+    });
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (...args: unknown[]) => {
-    logs.push(args.map((item) => String(item)).join(" "));
-  };
-
-  try {
-    await assert.rejects(runDoctorCommand({ config: configPath }), /Doctor found blocking errors/);
+    const result = await runDoctorWithHome(homeDir, configPath);
+    assert.equal(result.code, 1);
+    assert.equal(
+      result.output.includes("botChannelMap['123']") && result.output.includes("missing-route"),
+      true,
+    );
   } finally {
-    console.log = originalLog;
-    await rm(dirname(configPath), { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true });
   }
-
-  assert.equal(
-    logs.some((line) => line.includes("botChannelMap['123']") && line.includes("missing-route")),
-    true,
-  );
 });

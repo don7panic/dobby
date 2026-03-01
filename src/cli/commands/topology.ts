@@ -174,10 +174,9 @@ async function saveConfig(configPath: string, normalized: ReturnType<typeof ensu
  * Lists configured bot connectors in a human-friendly view.
  */
 export async function runBotListCommand(options: {
-  config?: string;
   json?: boolean;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
   const bots = listDiscordConnectors(rawConfig);
 
@@ -203,12 +202,11 @@ export async function runBotListCommand(options: {
  * Updates botName and/or botToken for one Discord connector instance.
  */
 export async function runBotSetCommand(options: {
-  config?: string;
   connectorId: string;
   name?: string;
   token?: string;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
   const { normalized, connector } = getDiscordConnectorOrThrow(rawConfig, options.connectorId);
 
@@ -240,11 +238,10 @@ export async function runBotSetCommand(options: {
  * Lists channel->route mappings for one connector or all Discord connectors.
  */
 export async function runChannelListCommand(options: {
-  config?: string;
   connectorId?: string;
   json?: boolean;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
   const mappings = listChannelMappings(rawConfig, options.connectorId);
 
@@ -278,12 +275,11 @@ export async function runChannelListCommand(options: {
  * Creates or updates one channel mapping on a Discord connector.
  */
 export async function runChannelSetCommand(options: {
-  config?: string;
   connectorId: string;
   channelId: string;
   routeId: string;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
   const { normalized, connector } = getDiscordConnectorOrThrow(rawConfig, options.connectorId);
 
@@ -310,11 +306,10 @@ export async function runChannelSetCommand(options: {
  * Removes one channel mapping from a Discord connector.
  */
 export async function runChannelUnsetCommand(options: {
-  config?: string;
   connectorId: string;
   channelId: string;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
   const { normalized, connector } = getDiscordConnectorOrThrow(rawConfig, options.connectorId);
 
@@ -341,10 +336,9 @@ export async function runChannelUnsetCommand(options: {
  * Lists route profiles with project/provider/sandbox and channel usage counts.
  */
 export async function runRouteListCommand(options: {
-  config?: string;
   json?: boolean;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
   const routes = listRoutes(rawConfig);
 
@@ -374,7 +368,6 @@ export async function runRouteListCommand(options: {
  * Creates or updates one route profile with explicit fields.
  */
 export async function runRouteSetCommand(options: {
-  config?: string;
   routeId: string;
   projectRoot?: string;
   tools?: string;
@@ -383,7 +376,7 @@ export async function runRouteSetCommand(options: {
   allowMentionsOnly?: boolean;
   setAsDefault?: boolean;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
   const normalized = ensureGatewayConfigShape(structuredClone(rawConfig));
   const existing = normalized.routing.routes[options.routeId];
@@ -435,11 +428,10 @@ export async function runRouteSetCommand(options: {
  * Removes one route, optionally cascading Discord channel mappings.
  */
 export async function runRouteRemoveCommand(options: {
-  config?: string;
   routeId: string;
   cascadeChannelMaps?: boolean;
 }): Promise<void> {
-  const configPath = resolveConfigPath(options.config);
+  const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
   const normalized = ensureGatewayConfigShape(structuredClone(rawConfig));
 
