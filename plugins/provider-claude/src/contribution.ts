@@ -909,6 +909,7 @@ class ClaudeProviderInstanceImpl implements ProviderInstance {
 
 export const providerClaudeContribution: ProviderContributionModule = {
   kind: "provider",
+  configSchema: z.toJSONSchema(claudeProviderConfigSchema),
   async createInstance(options) {
     const parsed = claudeProviderConfigSchema.parse(options.config);
     const executable = normalizeExecutable(options.host.configBaseDir, parsed.executable);

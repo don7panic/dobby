@@ -152,28 +152,57 @@ export class ExtensionStoreManager {
   }
 
   async install(packageSpec: string): Promise<InstalledExtensionInfo> {
+    const installed = await this.installMany([packageSpec]);
+    if (installed.length === 0) {
+      throw new Error(`Failed to install package from spec '${packageSpec}'`);
+    }
+
+    return installed[0]!;
+  }
+
+  async installMany(packageSpecs: string[]): Promise<InstalledExtensionInfo[]> {
+    const normalizedSpecs = packageSpecs
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+
+    if (normalizedSpecs.length === 0) {
+      return [];
+    }
+
     await this.ensureStoreInitialized();
     const beforeDeps = await this.readDependencies();
 
-    await this.runNpm(["install", "--prefix", this.extensionsDir, "--save-exact", packageSpec]);
+    await this.runNpm(["install", "--prefix", this.extensionsDir, "--save-exact", ...normalizedSpecs]);
 
     const afterDeps = await this.readDependencies();
-    const packageName = await pickInstalledPackageName(packageSpec, beforeDeps, afterDeps);
-    const version = afterDeps[packageName];
-    if (!version) {
-      throw new Error(`Package '${packageName}' is not present in extension store after installation`);
+    const seenPackages = new Set<string>();
+    const installedPackages: InstalledExtensionInfo[] = [];
+
+    for (const spec of normalizedSpecs) {
+      const packageName = await this.resolveInstalledPackageName(spec, beforeDeps, afterDeps, normalizedSpecs.length > 1);
+      if (seenPackages.has(packageName)) {
+        continue;
+      }
+      seenPackages.add(packageName);
+
+      const version = afterDeps[packageName];
+      if (!version) {
+        throw new Error(`Package '${packageName}' is not present in extension store after installation`);
+      }
+
+      const installed = await this.readInstalledExtension(packageName, version);
+      this.logger.info(
+        {
+          package: installed.packageName,
+          version: installed.version,
+          contributions: installed.manifest.contributions.map((item) => `${item.kind}:${item.id}`),
+        },
+        "Extension installed",
+      );
+      installedPackages.push(installed);
     }
 
-    const installed = await this.readInstalledExtension(packageName, version);
-    this.logger.info(
-      {
-        package: installed.packageName,
-        version: installed.version,
-        contributions: installed.manifest.contributions.map((item) => `${item.kind}:${item.id}`),
-      },
-      "Extension installed",
-    );
-    return installed;
+    return installedPackages;
   }
 
   async uninstall(packageName: string): Promise<void> {
@@ -267,6 +296,39 @@ export class ExtensionStoreManager {
       version,
       manifest,
     };
+  }
+
+  private async resolveInstalledPackageName(
+    packageSpec: string,
+    beforeDeps: Record<string, string>,
+    afterDeps: Record<string, string>,
+    isBatchInstall: boolean,
+  ): Promise<string> {
+    const inferred = parsePackageNameFromSpec(packageSpec);
+    if (inferred && afterDeps[inferred]) {
+      return inferred;
+    }
+
+    const inferredLocal = await parsePackageNameFromLocalSpec(packageSpec);
+    if (inferredLocal && afterDeps[inferredLocal]) {
+      return inferredLocal;
+    }
+
+    if (!isBatchInstall) {
+      return pickInstalledPackageName(packageSpec, beforeDeps, afterDeps);
+    }
+
+    const changedPackages = Object.entries(afterDeps)
+      .filter(([name, version]) => beforeDeps[name] !== version)
+      .map(([name]) => name);
+    if (changedPackages.length === 1) {
+      return changedPackages[0]!;
+    }
+
+    throw new Error(
+      `Could not determine installed package from spec '${packageSpec}' in batch install mode. ` +
+      "Use explicit npm package names for init/installMany.",
+    );
   }
 
   private async runNpm(args: string[]): Promise<void> {

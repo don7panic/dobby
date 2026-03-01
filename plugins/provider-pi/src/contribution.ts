@@ -57,7 +57,7 @@ const piProviderConfigSchema = z.object({
   thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).default("off"),
   agentDir: z.string().optional(),
   authFile: z.string().optional(),
-  modelsFile: z.string().optional(),
+  modelsFile: z.string().default("./models.custom.json"),
 });
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
@@ -399,6 +399,7 @@ class PiProviderInstanceImpl implements ProviderInstance {
 
 export const providerPiContribution: ProviderContributionModule = {
   kind: "provider",
+  configSchema: z.toJSONSchema(piProviderConfigSchema),
   createInstance(options) {
     const parsed = piProviderConfigSchema.parse(options.config);
     const agentDir = normalizeMaybePath(options.host.configBaseDir, parsed.agentDir);

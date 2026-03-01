@@ -55,12 +55,12 @@ V3 将扩展系统对齐 VSCode extension 使用体验：
 
 在 `src/main.ts` 提供子命令：
 
-- `extension install <packageSpec> --config <path>`
+- `extension install <packageSpec>`
   - 执行：`npm install --prefix <extensionsDir> --save-exact <packageSpec>`
   - 输出：已安装包、contributions、可粘贴配置模板（allowList + instances）
-- `extension uninstall <packageName> --config <path>`
+- `extension uninstall <packageName>`
   - 执行：`npm uninstall --prefix <extensionsDir> <packageName>`
-- `extension list --config <path>`
+- `extension list`
   - 列出扩展 store 中已安装包及其 contributions
 
 `start` 命令（默认）维持网关启动逻辑。
@@ -81,7 +81,7 @@ V3 将扩展系统对齐 VSCode extension 使用体验：
 
 当 allowList 包无法解析时，直接启动失败，并输出明确命令：
 
-`dobby extension install <package> --config <abs-config-path>`
+`dobby extension install <package>`
 
 ### 6.2 非法 manifest / entry
 

@@ -26,6 +26,7 @@ function resolveMaybeAbsolute(baseDir: string, value: string): string {
 
 export const sandboxBoxliteContribution: SandboxContributionModule = {
   kind: "sandbox",
+  configSchema: z.toJSONSchema(boxliteSandboxConfigSchema),
   async createInstance(options) {
     const parsed = boxliteSandboxConfigSchema.parse(options.config);
     const executor = await BoxliteExecutor.create(

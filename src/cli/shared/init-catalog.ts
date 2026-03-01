@@ -31,10 +31,12 @@ export interface InitSelectionContext {
   botName: string;
   botToken: string;
   channelId: string;
+  routeProviderChoiceId: InitProviderChoiceId;
 }
 
 export interface InitSelectionResult {
   providerChoiceIds: InitProviderChoiceId[];
+  routeProviderChoiceId: InitProviderChoiceId;
   providerChoiceId: InitProviderChoiceId;
   connectorChoiceId: InitConnectorChoiceId;
   extensionPackages: string[];
@@ -144,8 +146,14 @@ export function createInitSelectionConfig(
     throw new Error("At least one provider choice is required");
   }
 
+  if (!dedupedProviderChoiceIds.includes(context.routeProviderChoiceId)) {
+    throw new Error(
+      `route provider choice '${context.routeProviderChoiceId}' must be one of selected providers: ${dedupedProviderChoiceIds.join(", ")}`,
+    );
+  }
+
   const providerChoices = dedupedProviderChoiceIds.map((providerChoiceId) => PROVIDER_CATALOG[providerChoiceId]);
-  const primaryProviderChoice = providerChoices[0]!;
+  const primaryProviderChoice = PROVIDER_CATALOG[context.routeProviderChoiceId];
   const connectorChoice = CONNECTOR_CATALOG[connectorChoiceId];
 
   const baseRoute: RawRouteProfile = {
@@ -159,6 +167,7 @@ export function createInitSelectionConfig(
 
   return {
     providerChoiceIds: dedupedProviderChoiceIds,
+    routeProviderChoiceId: primaryProviderChoice.id,
     providerChoiceId: primaryProviderChoice.id,
     connectorChoiceId,
     extensionPackages: [

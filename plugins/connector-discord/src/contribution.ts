@@ -12,6 +12,7 @@ const discordConnectorConfigSchema = z.object({
 
 export const connectorDiscordContribution: ConnectorContributionModule = {
   kind: "connector",
+  configSchema: z.toJSONSchema(discordConnectorConfigSchema),
   createInstance(options) {
     const config = discordConnectorConfigSchema.parse(options.config) as DiscordConnectorConfig;
     return new DiscordConnector(options.instanceId, config, options.attachmentsRoot, options.host.logger);

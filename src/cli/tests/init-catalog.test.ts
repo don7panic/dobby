@@ -10,6 +10,7 @@ test("createInitSelectionConfig wires explicit Discord bot config for provider.p
     botName: "dobby-main",
     botToken: "token-abc",
     channelId: "123",
+    routeProviderChoiceId: "provider.pi",
   });
 
   assert.deepEqual(selected.connectorConfig, {
@@ -36,6 +37,7 @@ test("createInitSelectionConfig wires explicit Discord bot config for provider.c
     botName: "ops-bot",
     botToken: "token-xyz",
     channelId: "999",
+    routeProviderChoiceId: "provider.claude-cli",
   });
 
   assert.deepEqual(selected.connectorConfig, {
@@ -54,7 +56,7 @@ test("createInitSelectionConfig wires explicit Discord bot config for provider.c
   assert.equal(selected.routeProfile.providerId, "claude-cli.main");
 });
 
-test("createInitSelectionConfig supports multiple providers and keeps deterministic primary provider", () => {
+test("createInitSelectionConfig supports multiple providers and uses explicit route provider", () => {
   const selected = createInitSelectionConfig(["provider.pi", "provider.claude-cli"], "connector.discord", {
     routeId: "ops",
     projectRoot: "/tmp/project",
@@ -62,6 +64,7 @@ test("createInitSelectionConfig supports multiple providers and keeps determinis
     botName: "dobby-multi",
     botToken: "token-multi",
     channelId: "777",
+    routeProviderChoiceId: "provider.claude-cli",
   });
 
   assert.deepEqual(selected.providerChoiceIds, ["provider.pi", "provider.claude-cli"]);
@@ -74,6 +77,7 @@ test("createInitSelectionConfig supports multiple providers and keeps determinis
     "@dobby.ai/provider-claude-cli",
     "@dobby.ai/connector-discord",
   ]);
-  assert.equal(selected.providerInstanceId, "pi.main");
-  assert.equal(selected.routeProfile.providerId, "pi.main");
+  assert.equal(selected.providerInstanceId, "claude-cli.main");
+  assert.equal(selected.routeProfile.providerId, "claude-cli.main");
+  assert.equal(selected.routeProviderChoiceId, "provider.claude-cli");
 });

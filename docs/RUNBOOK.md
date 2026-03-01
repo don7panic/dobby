@@ -64,8 +64,11 @@ DOBBY_CONFIG_PATH=/tmp/gateway.dev.json npm run start -- config show providers -
 
 ```bash
 cp config/gateway.example.json config/gateway.json
-cp config/models.custom.example.json config/models.custom.json
 ```
+
+说明：
+1. 若你使用 `dobby init` 并选择了 `provider.pi`，`models.custom.json` 会在缺失时自动生成。
+2. 手动维护配置时，仍可参考 `config/models.custom.example.json`。
 
 ### 4.1 CLI config 命令（硬切）
 
@@ -77,12 +80,18 @@ cp config/models.custom.example.json config/models.custom.json
 dobby config show [section] [--json]
 dobby config list [section] [--json]
 dobby config edit
+dobby config schema list [--json]
+dobby config schema show <contributionId> [--json]
 ```
 
 旧命令映射：
 1. `config get ...` -> `config show` 或 `config list`
 2. `config set ...` -> `config edit`
 3. `config unset ...` -> 使用专用删除命令（`channel unset`、`route remove`、`extension uninstall`）
+
+`init` 语义说明：
+1. `dobby init` 仅用于首次初始化。
+2. 若配置文件已存在，`init` 会直接报错；请改用 `dobby config edit` 或 `dobby configure`。
 
 ## 5. 关键配置说明（v3）
 

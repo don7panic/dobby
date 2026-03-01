@@ -46,14 +46,47 @@ interface SandboxContributionRegistration {
   }) => Promise<SandboxInstance> | SandboxInstance;
 }
 
+export interface RegisteredContributionSchemaInfo {
+  contributionId: string;
+  packageName: string;
+  kind: "provider" | "connector" | "sandbox";
+  configSchema?: Record<string, unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeContributionSchema(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return value;
+}
+
 export class ExtensionRegistry {
   private readonly providers = new Map<string, ProviderContributionRegistration>();
   private readonly connectors = new Map<string, ConnectorContributionRegistration>();
   private readonly sandboxes = new Map<string, SandboxContributionRegistration>();
+  private readonly contributionSchemas = new Map<string, RegisteredContributionSchemaInfo>();
 
   registerPackages(loadedPackages: LoadedExtensionPackage[]): void {
     for (const extensionPackage of loadedPackages) {
       for (const contribution of extensionPackage.contributions) {
+        if (this.contributionSchemas.has(contribution.manifest.id)) {
+          throw new Error(`Duplicate contribution id '${contribution.manifest.id}'`);
+        }
+
+        const normalizedSchema = normalizeContributionSchema(
+          (contribution.module as { configSchema?: unknown }).configSchema,
+        );
+        this.contributionSchemas.set(contribution.manifest.id, {
+          contributionId: contribution.manifest.id,
+          packageName: extensionPackage.packageName,
+          kind: contribution.manifest.kind,
+          ...(normalizedSchema ? { configSchema: normalizedSchema } : {}),
+        });
+
         if (contribution.manifest.kind === "provider") {
           const module = contribution.module as ProviderContributionModule;
           if (this.providers.has(contribution.manifest.id)) {
@@ -91,6 +124,31 @@ export class ExtensionRegistry {
         });
       }
     }
+  }
+
+  listContributionSchemas(): RegisteredContributionSchemaInfo[] {
+    return [...this.contributionSchemas.values()]
+      .sort((a, b) => a.contributionId.localeCompare(b.contributionId))
+      .map((item) => ({
+        contributionId: item.contributionId,
+        packageName: item.packageName,
+        kind: item.kind,
+        ...(item.configSchema ? { configSchema: item.configSchema } : {}),
+      }));
+  }
+
+  getContributionSchema(contributionId: string): RegisteredContributionSchemaInfo | null {
+    const found = this.contributionSchemas.get(contributionId);
+    if (!found) {
+      return null;
+    }
+
+    return {
+      contributionId: found.contributionId,
+      packageName: found.packageName,
+      kind: found.kind,
+      ...(found.configSchema ? { configSchema: found.configSchema } : {}),
+    };
   }
 
   async createProviderInstances(

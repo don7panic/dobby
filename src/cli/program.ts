@@ -1,5 +1,11 @@
 import { Command } from "commander";
-import { runConfigEditCommand, runConfigListCommand, runConfigShowCommand } from "./commands/config.js";
+import {
+  runConfigEditCommand,
+  runConfigListCommand,
+  runConfigSchemaListCommand,
+  runConfigSchemaShowCommand,
+  runConfigShowCommand,
+} from "./commands/config.js";
 import { runConfigureCommand } from "./commands/configure.js";
 import { runDoctorCommand } from "./commands/doctor.js";
 import {
@@ -44,15 +50,8 @@ export function buildProgram(): Command {
   program
     .command("init")
     .description("Initialize minimal runnable gateway config")
-    .option("--merge", "Merge into existing config", false)
-    .option("--merge-strategy <strategy>", "When merging: preserve|overwrite|prompt", "preserve")
-    .option("--overwrite", "Overwrite existing config", false)
-    .action(async (opts) => {
-      await runInitCommand({
-        merge: Boolean(opts.merge),
-        mergeStrategy: opts.mergeStrategy as string,
-        overwrite: Boolean(opts.overwrite),
-      });
+    .action(async () => {
+      await runInitCommand();
     });
 
   program
@@ -232,6 +231,30 @@ export function buildProgram(): Command {
     .action(async (opts) => {
       await runConfigEditCommand({
         sections: opts.section as string[],
+      });
+    });
+
+  const configSchemaCommand = configCommand.command("schema").description("Inspect extension config schemas");
+
+  configSchemaCommand
+    .command("list")
+    .description("List loaded contributions and schema availability")
+    .option("--json", "Output JSON", false)
+    .action(async (opts) => {
+      await runConfigSchemaListCommand({
+        json: Boolean(opts.json),
+      });
+    });
+
+  configSchemaCommand
+    .command("show")
+    .description("Show one contribution config schema")
+    .argument("<contributionId>", "Contribution ID")
+    .option("--json", "Output JSON", false)
+    .action(async (contributionId: string, opts) => {
+      await runConfigSchemaShowCommand({
+        contributionId,
+        json: Boolean(opts.json),
       });
     });
 

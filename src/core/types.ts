@@ -225,6 +225,7 @@ export interface ProviderInstanceCreateOptions {
 
 export interface ProviderContributionModule {
   kind: "provider";
+  configSchema?: Record<string, unknown>;
   createInstance(options: ProviderInstanceCreateOptions): Promise<ProviderInstance> | ProviderInstance;
 }
 
@@ -237,6 +238,7 @@ export interface ConnectorInstanceCreateOptions {
 
 export interface ConnectorContributionModule {
   kind: "connector";
+  configSchema?: Record<string, unknown>;
   createInstance(options: ConnectorInstanceCreateOptions): Promise<ConnectorPlugin> | ConnectorPlugin;
 }
 
@@ -254,6 +256,7 @@ export interface SandboxInstanceCreateOptions {
 
 export interface SandboxContributionModule {
   kind: "sandbox";
+  configSchema?: Record<string, unknown>;
   createInstance(options: SandboxInstanceCreateOptions): Promise<SandboxInstance> | SandboxInstance;
 }
 

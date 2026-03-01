@@ -15,6 +15,7 @@ import {
   normalizeConfigureSectionOrder,
   type ConfigureSection,
 } from "../shared/configure-sections.js";
+import { applyAndValidateContributionSchemas } from "../shared/config-schema.js";
 
 /**
  * Resolves target sections from CLI flags or interactive section picker.
@@ -69,7 +70,9 @@ export async function runConfigureCommand(options: {
     await note(`Section '${section}' prepared`, "Updated");
   }
 
-  await writeConfigWithValidation(configPath, next, {
+  const validatedConfig = await applyAndValidateContributionSchemas(configPath, next);
+
+  await writeConfigWithValidation(configPath, validatedConfig, {
     validate: true,
     createBackup: true,
   });

@@ -22,15 +22,15 @@ test("CLI rejects --config option", async () => {
   );
 });
 
-test("init help shows only merge-related flags", () => {
+test("init help has no merge/overwrite flags", () => {
   const program = buildProgram();
   const initCommand = program.commands.find((command) => command.name() === "init");
   assert.ok(initCommand);
 
   const help = initCommand.helpInformation();
-  assert.match(help, /--merge/);
-  assert.match(help, /--merge-strategy/);
-  assert.match(help, /--overwrite/);
+  assert.equal(help.includes("--merge"), false);
+  assert.equal(help.includes("--merge-strategy"), false);
+  assert.equal(help.includes("--overwrite"), false);
 
   assert.equal(help.includes("--preset"), false);
   assert.equal(help.includes("--non-interactive"), false);
@@ -38,7 +38,7 @@ test("init help shows only merge-related flags", () => {
   assert.equal(help.includes("--config"), false);
 });
 
-test("config help shows show/list/edit only", () => {
+test("config help shows show/list/edit and schema", () => {
   const program = buildProgram();
   const configCommand = program.commands.find((command) => command.name() === "config");
   assert.ok(configCommand);
@@ -47,8 +47,22 @@ test("config help shows show/list/edit only", () => {
   assert.match(help, /show \[options\] \[section\]/);
   assert.match(help, /list \[options\] \[section\]/);
   assert.match(help, /edit \[options\]/);
+  assert.match(help, /schema/);
 
   assert.equal(help.includes("get"), false);
   assert.equal(help.includes("set"), false);
   assert.equal(help.includes("unset"), false);
+});
+
+test("config schema help shows list/show subcommands", () => {
+  const program = buildProgram();
+  const configCommand = program.commands.find((command) => command.name() === "config");
+  assert.ok(configCommand);
+
+  const schemaCommand = configCommand.commands.find((command) => command.name() === "schema");
+  assert.ok(schemaCommand);
+
+  const help = schemaCommand.helpInformation();
+  assert.match(help, /list \[options\]/);
+  assert.match(help, /show \[options\] <contributionId>/);
 });

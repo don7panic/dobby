@@ -31,6 +31,7 @@ Discord-first 本地 Agent Gateway（扩展系统 v3）。
 - `init`
 - `configure`
 - `config show|list|edit`
+- `config schema list|show`
 - `bot list|set`
 - `channel list|set|unset`
 - `route list|set|remove`
@@ -52,6 +53,8 @@ Discord-first 本地 Agent Gateway（扩展系统 v3）。
   - `config show [section] [--json]`
   - `config list [section] [--json]`
   - `config edit`
+  - `config schema list [--json]`
+  - `config schema show <contributionId> [--json]`
 - 映射关系：
   - `config get ...` -> `config show` 或 `config list`
   - `config set ...` -> `config edit`
@@ -78,12 +81,9 @@ dobby init
 ```
 
 说明：`init` 现在会在交互中分开选择 provider 与 connector。
-
-已有配置场景可用：
-
-```bash
-dobby init --merge --merge-strategy preserve
-```
+说明：当选择多个 provider 时，`init` 会额外让你显式选择默认 route 绑定的 provider，且 `providers.defaultProviderId` 会跟随该选择。
+说明：若选择 `provider.pi`，且 `models.custom.json` 不存在，`init` 会自动生成（仅缺失时生成，不覆盖已有文件）。
+说明：`init` 现在是一次性命令；若配置已存在会直接失败，请改用 `dobby config edit` 或 `dobby configure`。
 
 如果你是从源码直接运行（未全局安装 `dobby`），可用：
 

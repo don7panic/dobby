@@ -15,6 +15,11 @@ import {
   normalizeConfigureSectionOrder,
   type ConfigureSection,
 } from "../shared/configure-sections.js";
+import {
+  applyAndValidateContributionSchemas,
+  getContributionSchema,
+  listContributionSchemas,
+} from "../shared/config-schema.js";
 
 export const CONFIG_SECTION_VALUES = ["providers", "connectors", "routing", "sandboxes", "data", "extensions"] as const;
 
@@ -194,6 +199,60 @@ export async function runConfigListCommand(options: {
 }
 
 /**
+ * Lists loaded contribution schema availability for installed/allow-listed extensions.
+ */
+export async function runConfigSchemaListCommand(options: {
+  json?: boolean;
+}): Promise<void> {
+  const configPath = resolveConfigPath();
+  const rawConfig = await requireRawConfig(configPath);
+  const entries = await listContributionSchemas(configPath, rawConfig);
+
+  if (options.json) {
+    console.log(JSON.stringify(entries));
+    return;
+  }
+
+  if (entries.length === 0) {
+    console.log("(empty)");
+    return;
+  }
+
+  for (const entry of entries) {
+    console.log(
+      `${entry.contributionId}: kind=${entry.kind}, package=${entry.packageName}, hasSchema=${entry.hasSchema ? "yes" : "no"}`,
+    );
+  }
+}
+
+/**
+ * Prints one contribution JSON Schema by contributionId.
+ */
+export async function runConfigSchemaShowCommand(options: {
+  contributionId: string;
+  json?: boolean;
+}): Promise<void> {
+  const configPath = resolveConfigPath();
+  const rawConfig = await requireRawConfig(configPath);
+  const entry = await getContributionSchema(configPath, rawConfig, options.contributionId);
+
+  if (!entry) {
+    throw new Error(`Unknown contributionId '${options.contributionId}'. Run 'dobby config schema list' first.`);
+  }
+
+  if (!entry.configSchema) {
+    throw new Error(`Contribution '${options.contributionId}' does not expose configSchema.`);
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify(entry.configSchema));
+    return;
+  }
+
+  console.log(JSON.stringify(entry.configSchema, null, 2));
+}
+
+/**
  * Resolves interactive `config edit` target sections from flags or prompt.
  */
 async function resolveEditSections(sections: string[]): Promise<ConfigureSection[]> {
@@ -246,7 +305,9 @@ export async function runConfigEditCommand(options: {
     await note(`Section '${section}' prepared`, "Updated");
   }
 
-  await writeConfigWithValidation(configPath, next, {
+  const validatedConfig = await applyAndValidateContributionSchemas(configPath, next);
+
+  await writeConfigWithValidation(configPath, validatedConfig, {
     validate: true,
     createBackup: true,
   });

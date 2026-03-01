@@ -21,6 +21,7 @@ function resolveMaybeAbsolute(baseDir: string, value: string): string {
 
 export const sandboxDockerContribution: SandboxContributionModule = {
   kind: "sandbox",
+  configSchema: z.toJSONSchema(dockerSandboxConfigSchema),
   async createInstance(options) {
     const parsed = dockerSandboxConfigSchema.parse(options.config);
     const executor = await DockerExecutor.create(

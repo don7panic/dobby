@@ -14,7 +14,6 @@ import {
 import { ExtensionStoreManager } from "../../extension/manager.js";
 import {
   ensureGatewayConfigShape,
-  setDefaultProviderIfMissingOrInvalid,
   setDefaultRoute,
   upsertAllowListPackage,
   upsertConnectorInstance,
@@ -22,13 +21,13 @@ import {
   upsertRoute,
 } from "../shared/config-mutators.js";
 import { DEFAULT_DISCORD_BOT_NAME } from "../shared/discord-config.js";
+import { applyAndValidateContributionSchemas } from "../shared/config-schema.js";
 import {
   readRawConfig,
   resolveConfigPath,
   resolveDataRootDir,
   writeConfigWithValidation,
 } from "../shared/config-io.js";
-import type { RawGatewayConfig } from "../shared/config-types.js";
 import {
   createInitSelectionConfig,
   isInitConnectorChoiceId,
@@ -38,10 +37,12 @@ import {
   type InitConnectorChoiceId,
   type InitProviderChoiceId,
 } from "../shared/init-catalog.js";
+import { ensureProviderPiModelsFile } from "../shared/init-models-file.js";
 import { createLogger } from "../shared/runtime.js";
 
 interface InitInput {
   providerChoiceIds: InitProviderChoiceId[];
+  routeProviderChoiceId: InitProviderChoiceId;
   connectorChoiceId: InitConnectorChoiceId;
   projectRoot: string;
   channelId: string;
@@ -49,59 +50,6 @@ interface InitInput {
   botName: string;
   botToken: string;
   allowAllMessages: boolean;
-}
-
-type MergeStrategy = "preserve" | "overwrite" | "prompt";
-
-/**
- * Type guard for supported init merge strategy values.
- */
-function isMergeStrategy(value: string): value is MergeStrategy {
-  return value === "preserve" || value === "overwrite" || value === "prompt";
-}
-
-/**
- * Returns a trimmed string value when present, otherwise undefined.
- */
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-/**
- * Resolves merge strategy and prompts only when explicitly requested.
- */
-async function resolveMergeStrategy(options: {
-  merge?: boolean;
-  mergeStrategy?: string;
-  overwrite?: boolean;
-}, hasExistingConfig: boolean): Promise<"preserve" | "overwrite"> {
-  if (!hasExistingConfig || options.overwrite === true || options.merge !== true) {
-    return "overwrite";
-  }
-
-  const requested = (asString(options.mergeStrategy) ?? "preserve").toLowerCase();
-  if (!isMergeStrategy(requested)) {
-    throw new Error(`Unsupported --merge-strategy '${requested}'. Allowed: preserve, overwrite, prompt`);
-  }
-
-  if (requested !== "prompt") {
-    return requested;
-  }
-
-  const picked = await select({
-    message: "Existing values conflict with init selection. Choose merge strategy",
-    options: [
-      { value: "preserve", label: "preserve (keep existing values, only fill missing)" },
-      { value: "overwrite", label: "overwrite (replace conflicting values with init selection)" },
-    ],
-    initialValue: "preserve",
-  });
-  if (isCancel(picked)) {
-    cancel("Initialization cancelled.");
-    throw new Error("Initialization cancelled.");
-  }
-
-  return String(picked) as "preserve" | "overwrite";
 }
 
 /**
@@ -160,6 +108,29 @@ async function collectInitInput(): Promise<InitInput> {
   if (!providerChoiceIds.every((providerChoiceId) => isInitProviderChoiceId(providerChoiceId))) {
     const invalidChoice = providerChoiceIds.find((providerChoiceId) => !isInitProviderChoiceId(providerChoiceId));
     throw new Error(`Unsupported provider choice '${invalidChoice}'`);
+  }
+  const providerChoicesById = new Map(providerChoices.map((choice) => [choice.id, choice]));
+
+  let routeProviderChoiceId = providerChoiceIds[0] as InitProviderChoiceId;
+  if (providerChoiceIds.length > 1) {
+    const routeProviderChoiceResult = await select({
+      message: "Choose provider for the default route",
+      options: providerChoiceIds.map((providerChoiceId) => ({
+        value: providerChoiceId,
+        label: providerChoicesById.get(providerChoiceId as InitProviderChoiceId)?.label ?? providerChoiceId,
+      })),
+      initialValue: providerChoiceIds[0],
+    });
+    if (isCancel(routeProviderChoiceResult)) {
+      cancel("Initialization cancelled.");
+      throw new Error("Initialization cancelled.");
+    }
+
+    const routeProviderCandidate = String(routeProviderChoiceResult);
+    if (!isInitProviderChoiceId(routeProviderCandidate) || !providerChoiceIds.includes(routeProviderCandidate)) {
+      throw new Error(`Unsupported route provider choice '${routeProviderCandidate}'`);
+    }
+    routeProviderChoiceId = routeProviderCandidate;
   }
 
   const connectorChoices = listInitConnectorChoices();
@@ -229,6 +200,7 @@ async function collectInitInput(): Promise<InitInput> {
 
   return {
     providerChoiceIds: providerChoiceIds as InitProviderChoiceId[],
+    routeProviderChoiceId,
     connectorChoiceId,
     projectRoot,
     channelId,
@@ -242,24 +214,14 @@ async function collectInitInput(): Promise<InitInput> {
 /**
  * Executes first-time initialization: install required extensions, write config, then validate.
  */
-export async function runInitCommand(options: {
-  merge?: boolean;
-  mergeStrategy?: string;
-  overwrite?: boolean;
-}): Promise<void> {
-  if (options.merge && options.overwrite) {
-    throw new Error("--merge and --overwrite cannot be used together");
-  }
-
+export async function runInitCommand(): Promise<void> {
   const configPath = resolveConfigPath();
   const existingConfig = await readRawConfig(configPath);
-
-  if (existingConfig && !options.merge && !options.overwrite) {
+  if (existingConfig) {
     throw new Error(
-      `Config '${configPath}' already exists. Use --merge to keep existing values or --overwrite to replace it.`,
+      `Config '${configPath}' already exists. Use 'dobby config edit' or 'dobby configure' to update existing values.`,
     );
   }
-  const mergeStrategy = await resolveMergeStrategy(options, Boolean(existingConfig));
 
   const input = await collectInitInput();
   const selected = createInitSelectionConfig(input.providerChoiceIds, input.connectorChoiceId, {
@@ -269,24 +231,20 @@ export async function runInitCommand(options: {
     botName: input.botName,
     botToken: input.botToken,
     channelId: input.channelId,
+    routeProviderChoiceId: input.routeProviderChoiceId,
   });
 
-  const baseConfig: RawGatewayConfig =
-    options.overwrite || !existingConfig ? {} : structuredClone(existingConfig);
-  const next = ensureGatewayConfigShape(baseConfig);
+  const next = ensureGatewayConfigShape({});
 
   const rootDir = resolveDataRootDir(configPath, next);
   const manager = new ExtensionStoreManager(createLogger(), `${rootDir}/extensions`);
 
   const installSpinner = spinner();
-  installSpinner.start("Installing required extensions");
+  installSpinner.start(`Installing required extensions (${selected.extensionPackages.length} packages)`);
   try {
-    for (const packageName of selected.extensionPackages) {
-      const installed = await manager.install(packageName);
-      const hasAllowListEntry = next.extensions.allowList.some((item) => item.package === installed.packageName);
-      if (mergeStrategy === "overwrite" || !hasAllowListEntry) {
-        upsertAllowListPackage(next, installed.packageName, true);
-      }
+    const installedPackages = await manager.installMany(selected.extensionPackages);
+    for (const installed of installedPackages) {
+      upsertAllowListPackage(next, installed.packageName, true);
     }
     installSpinner.stop("Extensions installed");
   } catch (error) {
@@ -295,49 +253,51 @@ export async function runInitCommand(options: {
   }
 
   for (const provider of selected.providerInstances) {
-    const hasProviderInstance = Boolean(next.providers.instances[provider.instanceId]);
-    if (mergeStrategy === "overwrite" || !hasProviderInstance) {
-      upsertProviderInstance(next, provider.instanceId, provider.contributionId, provider.config);
+    upsertProviderInstance(next, provider.instanceId, provider.contributionId, provider.config);
+  }
+
+  upsertConnectorInstance(next, selected.connectorInstanceId, selected.connectorContributionId, selected.connectorConfig);
+
+  next.providers = {
+    ...next.providers,
+    defaultProviderId: selected.providerInstanceId,
+    instances: next.providers.instances,
+  };
+
+  upsertRoute(next, input.routeId, {
+    ...selected.routeProfile,
+    projectRoot: input.projectRoot,
+  });
+  setDefaultRoute(next, input.routeId);
+
+  const validatedConfig = await applyAndValidateContributionSchemas(configPath, next);
+
+  const createdModelsFiles: string[] = [];
+  for (const provider of selected.providerInstances) {
+    if (provider.contributionId !== "provider.pi") {
+      continue;
+    }
+
+    const resolvedProvider = validatedConfig.providers?.instances?.[provider.instanceId];
+    const ensured = await ensureProviderPiModelsFile(configPath, resolvedProvider?.config ?? provider.config);
+    if (ensured.created) {
+      createdModelsFiles.push(ensured.path);
     }
   }
 
-  const hasConnectorInstance = Boolean(next.connectors.instances[selected.connectorInstanceId]);
-  if (mergeStrategy === "overwrite" || !hasConnectorInstance) {
-    upsertConnectorInstance(next, selected.connectorInstanceId, selected.connectorContributionId, selected.connectorConfig);
-  }
-
-  if (mergeStrategy === "overwrite") {
-    next.providers = {
-      ...next.providers,
-      defaultProviderId: selected.providerInstanceId,
-      instances: next.providers.instances,
-    };
-  } else {
-    setDefaultProviderIfMissingOrInvalid(next);
-  }
-
-  const hasRoute = Boolean(next.routing.routes[input.routeId]);
-  if (mergeStrategy === "overwrite" || !hasRoute) {
-    upsertRoute(next, input.routeId, {
-      ...selected.routeProfile,
-      projectRoot: input.projectRoot,
-    });
-  }
-
-  if (mergeStrategy === "overwrite" || !next.routing.defaultRouteId) {
-    setDefaultRoute(next, input.routeId);
-  }
-
-  await writeConfigWithValidation(configPath, next, {
+  await writeConfigWithValidation(configPath, validatedConfig, {
     validate: true,
-    createBackup: Boolean(existingConfig),
+    createBackup: false,
   });
 
   outro("Initialization completed.");
 
   console.log(`Config written: ${configPath}`);
-  if (existingConfig && options.merge) {
-    console.log(`Merge strategy: ${mergeStrategy}`);
+  if (createdModelsFiles.length > 0) {
+    console.log("Generated model files:");
+    for (const path of createdModelsFiles) {
+      console.log(`- ${path}`);
+    }
   }
   console.log("Next steps:");
   console.log("1. dobby start");
