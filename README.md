@@ -55,6 +55,7 @@ Discord-first 本地 Agent Gateway（扩展系统 v3）。
   - `config edit`
   - `config schema list [--json]`
   - `config schema show <contributionId> [--json]`
+  - `config edit` / `configure` 在 provider/connector 实例配置时会优先读取扩展 `configSchema` 动态提问（默认只问关键字段，advanced 选项按需展开；无 schema 时会先提示原因，再决定是否走 JSON 输入）
 - 映射关系：
   - `config get ...` -> `config show` 或 `config list`
   - `config set ...` -> `config edit`
@@ -81,6 +82,7 @@ dobby init
 ```
 
 说明：`init` 现在会在交互中分开选择 provider 与 connector。
+说明：`init` 在安装扩展后，会优先按扩展暴露的 `configSchema` 动态询问 provider/connector 的配置字段（当前 Discord connector 仍保留专用引导配置流程）。
 说明：当选择多个 provider 时，`init` 会额外让你显式选择默认 route 绑定的 provider，且 `providers.defaultProviderId` 会跟随该选择。
 说明：若选择 `provider.pi`，且 `models.custom.json` 不存在，`init` 会自动生成（仅缺失时生成，不覆盖已有文件）。
 说明：`init` 现在是一次性命令；若配置已存在会直接失败，请改用 `dobby config edit` 或 `dobby configure`。

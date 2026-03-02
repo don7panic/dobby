@@ -84,6 +84,12 @@ dobby config schema list [--json]
 dobby config schema show <contributionId> [--json]
 ```
 
+说明：
+1. `config edit` 与 `configure` 在编辑 provider/connector 实例时，会优先读取扩展暴露的 `configSchema` 动态生成字段输入。
+2. 默认仅询问关键字段；带默认值的高级选项可在提示时按需展开。
+3. 若某个 contribution 没有可用 `configSchema`，CLI 会先提示原因（例如扩展 disabled/未安装）；未加载 schema 时会要求你确认是否继续使用 JSON 文本输入。
+4. `dobby init` 也会在安装扩展后按 `configSchema` 动态询问 provider/connector 的配置字段（Discord connector 保留专用引导配置）。
+
 旧命令映射：
 1. `config get ...` -> `config show` 或 `config list`
 2. `config set ...` -> `config edit`

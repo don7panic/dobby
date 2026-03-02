@@ -18,6 +18,7 @@ import {
 import {
   applyAndValidateContributionSchemas,
   getContributionSchema,
+  loadContributionSchemaCatalog,
   listContributionSchemas,
 } from "../shared/config-schema.js";
 
@@ -300,8 +301,18 @@ export async function runConfigEditCommand(options: {
     await note(`Execution order: ${sections.join(" -> ")}`, "Info");
   }
 
+  const catalog = await loadContributionSchemaCatalog(configPath, next);
+  const schemaByContributionId = new Map(
+    catalog
+      .filter((item) => item.configSchema)
+      .map((item) => [item.contributionId, item.configSchema!] as const),
+  );
+  const schemaStateByContributionId = new Map(
+    catalog.map((item) => [item.contributionId, item.configSchema ? "with_schema" : "without_schema"] as const),
+  );
+
   for (const section of sections) {
-    await applyConfigureSection(next, section);
+    await applyConfigureSection(next, section, { schemaByContributionId, schemaStateByContributionId });
     await note(`Section '${section}' prepared`, "Updated");
   }
 

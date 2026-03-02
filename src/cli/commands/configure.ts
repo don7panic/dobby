@@ -15,7 +15,7 @@ import {
   normalizeConfigureSectionOrder,
   type ConfigureSection,
 } from "../shared/configure-sections.js";
-import { applyAndValidateContributionSchemas } from "../shared/config-schema.js";
+import { applyAndValidateContributionSchemas, loadContributionSchemaCatalog } from "../shared/config-schema.js";
 
 /**
  * Resolves target sections from CLI flags or interactive section picker.
@@ -65,8 +65,18 @@ export async function runConfigureCommand(options: {
     await note(`Execution order: ${sections.join(" -> ")}`, "Info");
   }
 
+  const catalog = await loadContributionSchemaCatalog(configPath, next);
+  const schemaByContributionId = new Map(
+    catalog
+      .filter((item) => item.configSchema)
+      .map((item) => [item.contributionId, item.configSchema!] as const),
+  );
+  const schemaStateByContributionId = new Map(
+    catalog.map((item) => [item.contributionId, item.configSchema ? "with_schema" : "without_schema"] as const),
+  );
+
   for (const section of sections) {
-    await applyConfigureSection(next, section);
+    await applyConfigureSection(next, section, { schemaByContributionId, schemaStateByContributionId });
     await note(`Section '${section}' prepared`, "Updated");
   }
 

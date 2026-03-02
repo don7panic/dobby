@@ -22,10 +22,18 @@ import {
   normalizeDiscordBotChannelMap,
 } from "./discord-config.js";
 import type { RawGatewayConfig } from "./config-types.js";
+import { promptConfigFromSchema } from "./schema-prompts.js";
 
 export type ConfigureSection = "provider" | "connector" | "routing" | "sandbox" | "data";
 
 export const CONFIGURE_SECTION_VALUES: ConfigureSection[] = ["provider", "connector", "routing", "sandbox", "data"];
+
+export interface ConfigureSectionContext {
+  schemaByContributionId?: ReadonlyMap<string, Record<string, unknown>>;
+  schemaStateByContributionId?: ReadonlyMap<string, "with_schema" | "without_schema">;
+}
+
+type SchemaFallbackState = "without_schema" | "not_loaded";
 
 const SECTION_ORDER: Record<ConfigureSection, number> = {
   provider: 1,
@@ -78,6 +86,53 @@ async function requiredText(message: string, initialValue?: string, placeholder?
     }
 
     await note("This field is required.", "Validation");
+  }
+}
+
+/**
+ * Explains why schema-driven prompting is unavailable before falling back to raw JSON input.
+ */
+async function noteSchemaFallback(
+  contributionId: string,
+  context?: ConfigureSectionContext,
+): Promise<SchemaFallbackState> {
+  const state = context?.schemaStateByContributionId?.get(contributionId);
+  if (state === "without_schema") {
+    await note(
+      `Contribution '${contributionId}' is loaded but does not expose configSchema. Falling back to JSON input.`,
+      "Schema",
+    );
+    return "without_schema";
+  }
+
+  await note(
+    `No loaded schema for contribution '${contributionId}'. The extension may be disabled or not installed. Falling back to JSON input.`,
+    "Schema",
+  );
+  return "not_loaded";
+}
+
+/**
+ * Guards raw JSON fallback when schema is unavailable because contribution is not loaded.
+ */
+async function confirmUnloadedSchemaFallback(contributionId: string, state: SchemaFallbackState): Promise<void> {
+  if (state !== "not_loaded") {
+    return;
+  }
+
+  const proceed = await confirm({
+    message: `Continue with raw JSON for '${contributionId}'? Defaults will not be auto-applied.`,
+    initialValue: false,
+  });
+  if (isCancel(proceed)) {
+    cancel("Configure cancelled.");
+    throw new Error("Configure cancelled.");
+  }
+  if (!proceed) {
+    throw new Error(
+      `Cannot continue without schema for contribution '${contributionId}'. ` +
+      `Enable/install the extension first (check 'extensions.allowList'), then retry.`,
+    );
   }
 }
 
@@ -192,7 +247,7 @@ async function editBotChannelMapGuided(
 /**
  * Runs provider-related prompts and applies changes into config.providers.
  */
-async function configureProviderSection(config: RawGatewayConfig): Promise<void> {
+async function configureProviderSection(config: RawGatewayConfig, context?: ConfigureSectionContext): Promise<void> {
   const next = ensureGatewayConfigShape(config);
   const providerInstances = next.providers?.instances ?? {};
 
@@ -228,44 +283,17 @@ async function configureProviderSection(config: RawGatewayConfig): Promise<void>
   );
 
   let instanceConfig: Record<string, unknown> = {};
-  if (contributionId === "provider.pi") {
-    const provider = await requiredText("Pi provider key", String(existing?.config?.provider ?? "custom-openai"));
-    const model = await requiredText("Pi model", String(existing?.config?.model ?? "example-model"));
-    const thinkingLevel = await requiredText(
-      "Pi thinking level",
-      String(existing?.config?.thinkingLevel ?? "off"),
-      "off|minimal|low|medium|high|xhigh",
-    );
-    const modelsFileResult = await text({
-      message: "modelsFile (optional)",
-      initialValue: String(existing?.config?.modelsFile ?? "./models.custom.json"),
+  const schema = context?.schemaByContributionId?.get(contributionId);
+  if (schema) {
+    const existingConfig = existing?.config && typeof existing.config === "object" && !Array.isArray(existing.config)
+      ? existing.config as Record<string, unknown>
+      : {};
+    instanceConfig = await promptConfigFromSchema(schema, existingConfig, {
+      title: `Provider '${instanceId}' (${contributionId})`,
     });
-    if (isCancel(modelsFileResult)) {
-      cancel("Configure cancelled.");
-      throw new Error("Configure cancelled.");
-    }
-
-    instanceConfig = {
-      provider,
-      model,
-      thinkingLevel,
-      ...(String(modelsFileResult ?? "").trim().length > 0 ? { modelsFile: String(modelsFileResult).trim() } : {}),
-    };
-  } else if (contributionId === "provider.claude-cli") {
-    const model = await requiredText("Claude model", String(existing?.config?.model ?? "claude-sonnet-4-5"));
-    const maxTurns = await requiredText("maxTurns", String(existing?.config?.maxTurns ?? 20));
-    const command = await requiredText("command", String(existing?.config?.command ?? "claude"));
-
-    instanceConfig = {
-      model,
-      maxTurns: Number.parseInt(maxTurns, 10),
-      command,
-      commandArgs: Array.isArray(existing?.config?.commandArgs) ? existing.config.commandArgs : [],
-      authMode: String(existing?.config?.authMode ?? "auto"),
-      permissionMode: String(existing?.config?.permissionMode ?? "bypassPermissions"),
-      streamVerbose: existing?.config?.streamVerbose !== false,
-    };
   } else {
+    const fallbackState = await noteSchemaFallback(contributionId, context);
+    await confirmUnloadedSchemaFallback(contributionId, fallbackState);
     const rawConfig = await text({
       message: "Provider config JSON (optional)",
       initialValue: existing?.config ? JSON.stringify(existing.config) : "{}",
@@ -316,7 +344,7 @@ async function configureProviderSection(config: RawGatewayConfig): Promise<void>
 /**
  * Runs connector-related prompts and applies changes into config.connectors.
  */
-async function configureConnectorSection(config: RawGatewayConfig): Promise<void> {
+async function configureConnectorSection(config: RawGatewayConfig, context?: ConfigureSectionContext): Promise<void> {
   const next = ensureGatewayConfigShape(config);
   const connectorInstances = next.connectors?.instances ?? {};
 
@@ -427,7 +455,17 @@ async function configureConnectorSection(config: RawGatewayConfig): Promise<void
       reconnectStaleMs,
       reconnectCheckIntervalMs,
     };
+  } else if (context?.schemaByContributionId?.has(contributionId)) {
+    const schema = context.schemaByContributionId.get(contributionId)!;
+    const existingConfig = existing?.config && typeof existing.config === "object" && !Array.isArray(existing.config)
+      ? existing.config as Record<string, unknown>
+      : {};
+    connectorConfig = await promptConfigFromSchema(schema, existingConfig, {
+      title: `Connector '${instanceId}' (${contributionId})`,
+    });
   } else {
+    const fallbackState = await noteSchemaFallback(contributionId, context);
+    await confirmUnloadedSchemaFallback(contributionId, fallbackState);
     const rawConfig = await text({
       message: "Connector config JSON (optional)",
       initialValue: existing?.config ? JSON.stringify(existing.config) : "{}",
@@ -623,14 +661,18 @@ async function configureDataSection(config: RawGatewayConfig): Promise<void> {
 /**
  * Runs one interactive config section mutator.
  */
-export async function applyConfigureSection(config: RawGatewayConfig, section: ConfigureSection): Promise<void> {
+export async function applyConfigureSection(
+  config: RawGatewayConfig,
+  section: ConfigureSection,
+  context?: ConfigureSectionContext,
+): Promise<void> {
   if (section === "provider") {
-    await configureProviderSection(config);
+    await configureProviderSection(config, context);
     return;
   }
 
   if (section === "connector") {
-    await configureConnectorSection(config);
+    await configureConnectorSection(config, context);
     return;
   }
 

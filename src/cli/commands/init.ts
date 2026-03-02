@@ -21,7 +21,7 @@ import {
   upsertRoute,
 } from "../shared/config-mutators.js";
 import { DEFAULT_DISCORD_BOT_NAME } from "../shared/discord-config.js";
-import { applyAndValidateContributionSchemas } from "../shared/config-schema.js";
+import { applyAndValidateContributionSchemas, loadContributionSchemaCatalog } from "../shared/config-schema.js";
 import {
   readRawConfig,
   resolveConfigPath,
@@ -39,6 +39,7 @@ import {
 } from "../shared/init-catalog.js";
 import { ensureProviderPiModelsFile } from "../shared/init-models-file.js";
 import { createLogger } from "../shared/runtime.js";
+import { promptConfigFromSchema } from "../shared/schema-prompts.js";
 
 interface InitInput {
   providerChoiceIds: InitProviderChoiceId[];
@@ -252,11 +253,79 @@ export async function runInitCommand(): Promise<void> {
     throw error;
   }
 
+  const catalog = await loadContributionSchemaCatalog(configPath, next);
+  const schemaByContributionId = new Map(
+    catalog
+      .filter((item) => item.configSchema)
+      .map((item) => [item.contributionId, item.configSchema!] as const),
+  );
+  const schemaStateByContributionId = new Map(
+    catalog.map((item) => [item.contributionId, item.configSchema ? "with_schema" : "without_schema"] as const),
+  );
+  const warnedSchemaFallback = new Set<string>();
+  const noteSchemaFallback = async (contributionId: string): Promise<"without_schema" | "not_loaded"> => {
+    if (warnedSchemaFallback.has(contributionId)) {
+      const existingState = schemaStateByContributionId.get(contributionId);
+      return existingState === "without_schema" ? "without_schema" : "not_loaded";
+    }
+    warnedSchemaFallback.add(contributionId);
+
+    const state = schemaStateByContributionId.get(contributionId);
+    if (state === "without_schema") {
+      await note(
+        `Contribution '${contributionId}' is loaded but does not expose configSchema. Falling back to built-in defaults/JSON.`,
+        "Schema",
+      );
+      return "without_schema";
+    }
+
+    await note(
+      `No loaded schema for contribution '${contributionId}'. The extension may be disabled or not installed.`,
+      "Schema",
+    );
+    return "not_loaded";
+  };
+
+  const resolveFallbackConfig = async (
+    kind: "provider" | "connector",
+    instanceId: string,
+    contributionId: string,
+    fallbackConfig: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    const state = await noteSchemaFallback(contributionId);
+    if (state === "not_loaded") {
+      throw new Error(
+        `Cannot initialize ${kind} '${instanceId}' because schema for contribution '${contributionId}' is not loaded. ` +
+        `Ensure the extension is installed and enabled, then retry.`,
+      );
+    }
+    return fallbackConfig;
+  };
+
   for (const provider of selected.providerInstances) {
-    upsertProviderInstance(next, provider.instanceId, provider.contributionId, provider.config);
+    const schema = schemaByContributionId.get(provider.contributionId);
+    const providerConfig = schema
+      ? await promptConfigFromSchema(schema, provider.config, {
+        title: `Provider '${provider.instanceId}' (${provider.contributionId})`,
+      })
+      : await resolveFallbackConfig("provider", provider.instanceId, provider.contributionId, provider.config);
+    upsertProviderInstance(next, provider.instanceId, provider.contributionId, providerConfig);
   }
 
-  upsertConnectorInstance(next, selected.connectorInstanceId, selected.connectorContributionId, selected.connectorConfig);
+  const connectorSchema = schemaByContributionId.get(selected.connectorContributionId);
+  const connectorConfig = selected.connectorContributionId === "connector.discord"
+    ? selected.connectorConfig
+    : connectorSchema
+      ? await promptConfigFromSchema(connectorSchema, selected.connectorConfig, {
+        title: `Connector '${selected.connectorInstanceId}' (${selected.connectorContributionId})`,
+      })
+      : await resolveFallbackConfig(
+        "connector",
+        selected.connectorInstanceId,
+        selected.connectorContributionId,
+        selected.connectorConfig,
+      );
+  upsertConnectorInstance(next, selected.connectorInstanceId, selected.connectorContributionId, connectorConfig);
 
   next.providers = {
     ...next.providers,

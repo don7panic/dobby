@@ -78,8 +78,8 @@ interface JsonFallbackOutput {
 }
 
 const claudeCliProviderConfigSchema = z.object({
-  model: z.string().min(1),
-  maxTurns: z.number().int().positive().default(20),
+  model: z.string().min(1).default("claude-sonnet-4-5"),
+  maxTurns: z.number().int().positive().default(1024),
   command: z.string().min(1).default("claude"),
   commandArgs: z.array(z.string()).default([]),
   authMode: z.enum(["auto", "subscription", "apiKey"]).default("auto"),
@@ -1482,7 +1482,7 @@ class ClaudeCliProviderInstanceImpl implements ProviderInstance {
     private readonly providerConfig: ClaudeCliProviderConfig,
     private readonly dataConfig: ProviderInstanceCreateOptions["data"],
     private readonly logger: ProviderInstanceCreateOptions["host"]["logger"],
-  ) {}
+  ) { }
 
   async createRuntime(options: ProviderRuntimeCreateOptions): Promise<GatewayAgentRuntime> {
     await mkdir(this.dataConfig.sessionsDir, { recursive: true });
