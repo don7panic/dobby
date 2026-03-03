@@ -178,6 +178,12 @@ npm run plugins:setup:local
 - 扩展安装/卸载不会自动修改 `gateway.json`。
 - 默认 sandbox 是 `host.builtin`，可通过 `routing.routes.*.sandboxId` 覆盖到 docker/boxlite 实例。
 
+## A2A Core（Draft）
+
+`dobby` 提供轻量 A2A 基础能力（`delegate/status/cancel`），用于 route 之间的受控协作。  
+默认关闭，显式 allowlist 放行；定位为“最小可定制内核”，不是平台型工作流系统。  
+详见：`docs/A2A_CORE_DESIGN.md`
+
 ## 插件契约（作者侧）
 
 - 必须包含 `dobby.manifest.json`。

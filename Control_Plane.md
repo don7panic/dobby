@@ -1,5 +1,8 @@
 # Dobby Control Plane 架构设计（与 Domain Plane 交互）
 
+> A2A Core 实施文档：`docs/A2A_CORE_DESIGN.md`  
+> 说明：Control Plane 文档描述总体架构；A2A Core 文档描述当前仓库可落地的最小能力边界与接口契约。
+
 ## 1. 背景
 
 `dobby` 当前是 Discord-first 的本地 Agent Gateway（扩展系统 v3）。  
