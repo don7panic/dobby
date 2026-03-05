@@ -12,6 +12,7 @@ import type {
   ConnectorContext,
   ConnectorPlugin,
   ConnectorSendResult,
+  ConnectorTypingEnvelope,
   GatewayLogger,
   OutboundEnvelope,
 } from "@dobby.ai/plugin-sdk";
@@ -146,6 +147,15 @@ export class DiscordConnector implements ConnectorPlugin {
 
     const sent = await channel.send(options);
     return { messageId: sent.id };
+  }
+
+  async sendTyping(message: ConnectorTypingEnvelope): Promise<void> {
+    if (!this.client) {
+      throw new Error("Discord connector is not started");
+    }
+
+    const channel = await this.fetchTextChannel(message.chatId);
+    await channel.sendTyping();
   }
 
   async stop(): Promise<void> {

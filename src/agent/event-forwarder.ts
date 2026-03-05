@@ -3,6 +3,7 @@ import type { ConnectorPlugin, GatewayAgentEvent, GatewayLogger, InboundEnvelope
 interface ForwarderOptions {
   updateIntervalMs?: number;
   toolMessageMode?: "none" | "errors" | "all";
+  onOutboundActivity?: () => void;
 }
 
 function truncate(text: string, max?: number): string {
@@ -46,26 +47,34 @@ function splitForMaxLength(text: string, max?: number): string[] {
 }
 
 export class EventForwarder {
+  private rootMessageId: string | null;
   private responseText = "";
   private pendingFlush: NodeJS.Timeout | null = null;
   private readonly pendingOps: Array<Promise<unknown>> = [];
   private readonly updateIntervalMs: number;
   private readonly toolMessageMode: "none" | "errors" | "all";
   private readonly maxTextLength: number | undefined;
+  private readonly onOutboundActivity: (() => void) | undefined;
 
   constructor(
     private readonly connector: ConnectorPlugin,
     private readonly inbound: InboundEnvelope,
-    private readonly rootMessageId: string,
+    rootMessageId: string | null,
     private readonly logger: GatewayLogger,
     options: ForwarderOptions = {},
   ) {
+    this.rootMessageId = rootMessageId;
     this.updateIntervalMs = options.updateIntervalMs ?? 400;
     this.toolMessageMode = options.toolMessageMode ?? "none";
+    this.onOutboundActivity = options.onOutboundActivity;
     const capabilityMaxTextLength = this.connector.capabilities.maxTextLength;
     this.maxTextLength = typeof capabilityMaxTextLength === "number" && capabilityMaxTextLength > 0
       ? capabilityMaxTextLength
       : undefined;
+  }
+
+  primaryMessageId(): string | null {
+    return this.rootMessageId;
   }
 
   handleEvent = (event: GatewayAgentEvent): void => {
@@ -128,12 +137,7 @@ export class EventForwarder {
     await this.flushNow();
 
     if (this.responseText.trim().length === 0) {
-      await this.connector.send({
-        ...this.baseEnvelope(),
-        mode: "update",
-        targetMessageId: this.rootMessageId,
-        text: "(completed with no text response)",
-      });
+      await this.sendPrimary("(completed with no text response)");
       await Promise.allSettled(this.pendingOps);
       return;
     }
@@ -141,20 +145,16 @@ export class EventForwarder {
     const chunks = splitForMaxLength(this.responseText, this.maxTextLength);
     if (chunks.length > 1) {
       try {
-        await this.connector.send({
-          ...this.baseEnvelope(),
-          mode: "update",
-          targetMessageId: this.rootMessageId,
-          text: chunks[0] ?? "",
-        });
+        await this.sendPrimary(chunks[0] ?? "");
 
         for (const chunk of chunks.slice(1)) {
           await this.connector.send({
             ...this.baseEnvelope(),
             mode: "create",
-            replyToMessageId: this.rootMessageId,
+            ...(this.rootMessageId ? { replyToMessageId: this.rootMessageId } : {}),
             text: chunk,
           });
+          this.noteOutboundActivity();
         }
       } catch (error) {
         this.logger.warn(
@@ -194,17 +194,14 @@ export class EventForwarder {
       this.pendingFlush = null;
     }
 
-    const content = this.responseText.trim().length > 0
-      ? truncate(this.responseText, this.maxTextLength)
-      : "_Thinking..._";
+    if (this.responseText.trim().length === 0) {
+      return;
+    }
+
+    const content = truncate(this.responseText, this.maxTextLength);
 
     try {
-      await this.connector.send({
-        ...this.baseEnvelope(),
-        mode: "update",
-        targetMessageId: this.rootMessageId,
-        text: content,
-      });
+      await this.sendPrimary(content);
     } catch (error) {
       this.logger.warn(
         {
@@ -224,8 +221,11 @@ export class EventForwarder {
       .send({
         ...this.baseEnvelope(),
         mode: "create",
-        replyToMessageId: this.rootMessageId,
+        ...(this.rootMessageId ? { replyToMessageId: this.rootMessageId } : {}),
         text,
+      })
+      .then(() => {
+        this.noteOutboundActivity();
       })
       .catch((error) => {
         this.logger.warn(
@@ -240,5 +240,30 @@ export class EventForwarder {
       });
 
     this.pendingOps.push(promise);
+  }
+
+  private async sendPrimary(text: string): Promise<void> {
+    if (this.rootMessageId) {
+      await this.connector.send({
+        ...this.baseEnvelope(),
+        mode: "update",
+        targetMessageId: this.rootMessageId,
+        text,
+      });
+      this.noteOutboundActivity();
+      return;
+    }
+
+    const created = await this.connector.send({
+      ...this.baseEnvelope(),
+      mode: "create",
+      text,
+    });
+    this.rootMessageId = created.messageId ?? this.rootMessageId;
+    this.noteOutboundActivity();
+  }
+
+  private noteOutboundActivity(): void {
+    this.onOutboundActivity?.();
   }
 }

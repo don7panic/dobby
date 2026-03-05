@@ -55,6 +55,13 @@ export interface ConnectorSendResult {
   messageId?: string;
 }
 
+export interface ConnectorTypingEnvelope {
+  platform: Platform;
+  accountId: string;
+  chatId: string;
+  threadId?: string;
+}
+
 export interface ConnectorContext {
   emitInbound: (msg: InboundEnvelope) => Promise<void>;
   emitControl: (event: {
@@ -82,6 +89,7 @@ export interface ConnectorPlugin {
   readonly capabilities: ConnectorCapabilities;
   start(ctx: ConnectorContext): Promise<void>;
   send(message: OutboundEnvelope): Promise<ConnectorSendResult>;
+  sendTyping?(message: ConnectorTypingEnvelope): Promise<void>;
   stop(): Promise<void>;
 }
 

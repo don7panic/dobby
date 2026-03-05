@@ -39,7 +39,14 @@ interface StopControlEvent {
   threadId?: string;
 }
 
-const INITIAL_REPLY_TIMEOUT_MS = 15_000;
+const TYPING_INITIAL_DELAY_MS = 1_200;
+const TYPING_KEEPALIVE_INTERVAL_MS = 8_000;
+const TYPING_CHECK_INTERVAL_MS = 1_000;
+
+interface TypingController {
+  touchOutput: () => void;
+  stop: () => void;
+}
 
 function isImageAttachment(attachment: InboundAttachment): boolean {
   return Boolean(attachment.mimeType?.startsWith("image/") && attachment.localPath);
@@ -118,6 +125,59 @@ export class Gateway {
       accountId: event.accountId,
       chatId: event.chatId,
       ...(event.threadId ? { threadId: event.threadId } : {}),
+    };
+  }
+
+  private startTypingKeepAlive(connector: ConnectorPlugin, message: InboundEnvelope): TypingController {
+    const sendTypingMethod = connector.sendTyping;
+    if (!connector.capabilities.supportsTyping || !sendTypingMethod) {
+      return {
+        touchOutput: () => {},
+        stop: () => {},
+      };
+    }
+
+    const typingTarget = this.outboundBaseFromInbound(message);
+    let stopped = false;
+    let inFlight = false;
+    let lastTypingAtMs = 0;
+    let lastOutputAtMs = Date.now();
+    const sendTyping = async (): Promise<void> => {
+      if (stopped || inFlight) return;
+      const now = Date.now();
+      if (now - lastOutputAtMs < TYPING_INITIAL_DELAY_MS) return;
+      if (lastTypingAtMs > 0 && now - lastTypingAtMs < TYPING_KEEPALIVE_INTERVAL_MS) return;
+      inFlight = true;
+      try {
+        await sendTypingMethod.call(connector, typingTarget);
+        lastTypingAtMs = Date.now();
+      } catch (error) {
+        this.options.logger.warn(
+          {
+            err: error,
+            connectorId: message.connectorId,
+            chatId: message.chatId,
+            threadId: message.threadId,
+          },
+          "Failed to send typing indicator",
+        );
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const checkTimer = setInterval(() => {
+      void sendTyping();
+    }, TYPING_CHECK_INTERVAL_MS);
+
+    return {
+      touchOutput: () => {
+        lastOutputAtMs = Date.now();
+      },
+      stop: () => {
+        stopped = true;
+        clearInterval(checkTimer);
+      },
     };
   }
 
@@ -212,62 +272,20 @@ export class Gateway {
       "Processing inbound message",
     );
 
-    let initial: { messageId?: string };
+    const typingController = this.startTypingKeepAlive(connector, message);
+    let unsubscribe: (() => void) | null = null;
+    const forwarder = new EventForwarder(connector, message, null, this.options.logger, {
+      onOutboundActivity: typingController.touchOutput,
+    });
     try {
-      this.options.logger.info(
-        {
-          connectorId: message.connectorId,
-          routeId: route.routeId,
-          messageId: message.messageId,
-          timeoutMs: INITIAL_REPLY_TIMEOUT_MS,
-        },
-        "Sending initial thinking message",
-      );
+      unsubscribe = runtime.subscribe(forwarder.handleEvent);
 
-      initial = await this.withTimeout(
-        connector.send({
-          ...this.outboundBaseFromInbound(message),
-          mode: "create",
-          replyToMessageId: message.messageId,
-          text: "_Thinking..._",
-        }),
-        INITIAL_REPLY_TIMEOUT_MS,
-        "send initial thinking message",
-      );
-
-      this.options.logger.info(
-        {
-          connectorId: message.connectorId,
-          routeId: route.routeId,
-          messageId: message.messageId,
-          initialMessageId: initial.messageId ?? null,
-        },
-        "Initial thinking message sent",
-      );
-    } catch (error) {
-      this.options.logger.error(
-        {
-          err: error,
-          connectorId: message.connectorId,
-          routeId: route.routeId,
-          messageId: message.messageId,
-        },
-        "Failed to send initial thinking message",
-      );
-      return;
-    }
-
-    const rootMessageId = initial.messageId ?? message.messageId;
-    const forwarder = new EventForwarder(connector, message, rootMessageId, this.options.logger);
-    const unsubscribe = runtime.subscribe(forwarder.handleEvent);
-
-    try {
       const payload = await this.buildPromptPayload(message);
       this.options.logger.info(
         {
           routeId: route.routeId,
           messageId: message.messageId,
-          rootMessageId,
+          rootMessageId: forwarder.primaryMessageId() ?? null,
           hasImages: payload.images.length > 0,
           textLength: payload.text.length,
         },
@@ -278,7 +296,7 @@ export class Gateway {
         {
           routeId: route.routeId,
           messageId: message.messageId,
-          rootMessageId,
+          rootMessageId: forwarder.primaryMessageId() ?? null,
         },
         "Provider prompt finished",
       );
@@ -286,32 +304,26 @@ export class Gateway {
       this.options.logger.info({ routeId: route.routeId, messageId: message.messageId }, "Inbound message processed");
     } catch (error) {
       this.options.logger.error({ err: error, routeId: route.routeId }, "Failed to process inbound message");
-      await connector.send({
-        ...this.outboundBaseFromInbound(message),
-        mode: "update",
-        targetMessageId: rootMessageId,
-        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      const rootMessageId = forwarder.primaryMessageId();
+      await connector.send(
+        rootMessageId
+          ? {
+            ...this.outboundBaseFromInbound(message),
+            mode: "update",
+            targetMessageId: rootMessageId,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          }
+          : {
+            ...this.outboundBaseFromInbound(message),
+            mode: "create",
+            replyToMessageId: message.messageId,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+      );
     } finally {
-      unsubscribe();
+      unsubscribe?.();
+      typingController.stop();
     }
-  }
-
-  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        const timer = setTimeout(() => {
-          reject(new Error(`Timed out after ${timeoutMs}ms while attempting to ${label}`));
-        }, timeoutMs);
-
-        promise.finally(() => {
-          clearTimeout(timer);
-        }).catch(() => {
-          // Ignore; timeout race handles errors.
-        });
-      }),
-    ]);
   }
 
   private async buildPromptPayload(message: InboundEnvelope): Promise<PromptPayload> {
