@@ -19,6 +19,7 @@ Work In Progress
 这个好像直接用 claude code 和 pi-mono 就可以实现，需要找到一些比较好用的 skills
 
 - X 上的热点追踪 social listening 功能
+- 机票价格助手 trip Google Flights
 
 ## agents 协同
 
