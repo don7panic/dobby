@@ -178,11 +178,11 @@ npm run plugins:setup:local
 - 扩展安装/卸载不会自动修改 `gateway.json`。
 - 默认 sandbox 是 `host.builtin`，可通过 `routing.routes.*.sandboxId` 覆盖到 docker/boxlite 实例。
 
-## A2A Core（Draft）
+## Teamwork Handoff Loop（Draft）
 
-`dobby` 提供轻量 A2A 基础能力（`delegate/status/cancel`），用于 route 之间的受控协作。  
-默认关闭，显式 allowlist 放行；定位为“最小可定制内核”，不是平台型工作流系统。  
-详见：`docs/A2A_CORE_DESIGN.md`
+`dobby` 的 Teamwork Handoff Loop 方案用于“同一 channel 多 bot 串行协作”场景，核心语义是 Task 生命周期 + actor handoff（`start/handoff/complete/cancel`），并通过 `maxRound` 与 `maxPingPong` 防止无限回环。  
+默认仍以“显式开启 + allowlist 授权”为前提。  
+详见：`docs/TEAMWORK_HANDOFF_DESIGN.md`
 
 ## 插件契约（作者侧）
 
@@ -202,3 +202,4 @@ npm run build
 
 - 运行与排障手册：`<repo-root>/docs/RUNBOOK.md`
 - 扩展系统设计：`<repo-root>/docs/EXTENSION_SYSTEM_ARCHITECTURE.md`
+- Teamwork Handoff 设计：`<repo-root>/docs/TEAMWORK_HANDOFF_DESIGN.md`
