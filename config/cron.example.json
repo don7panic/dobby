@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "storeFile": "./data/state/cron-jobs.json",
+  "runLogFile": "./data/state/cron-runs.jsonl",
+  "pollIntervalMs": 10000,
+  "maxConcurrentRuns": 1,
+  "runMissedOnStartup": true,
+  "jobTimeoutMs": 600000
+}

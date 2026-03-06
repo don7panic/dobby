@@ -92,8 +92,8 @@ nanoclaw 的不适配点：
 Cron 设计应保持 connector-agnostic，避免绑定 Discord 语义：
 
 1. Scheduler 的唯一执行入口是 `Gateway.handleScheduled(...)`（synthetic inbound），不直接依赖 Discord SDK 细节。
-2. 任务目标存储为通用 target（`connectorId/platform/accountId/chatId/threadId`），不存 Discord 专有字段。
-3. 每个 connector 的文本长度、是否支持编辑/线程等差异，继续由 `EventForwarder + connector plugin` 处理。
+2. v1 将任务目标定义为**结果回传通道**（`delivery`），字段先收敛为 `connectorId + routeId + channelId (+threadId)`。
+3. 每个 connector 的文本长度、`updateStrategy`（`edit/final_only/append`）、线程能力等差异，继续由 `EventForwarder + connector plugin` 处理。
 4. 文档与实现里提到 Discord 的地方都视为“示例 connector”，不是 Cron 的架构前提。
 
 ### 4.3 配置边界（采纳建议）
@@ -176,13 +176,10 @@ type JobSchedule =
   | { kind: "every"; everyMs: number }
   | { kind: "cron"; expr: string; tz?: string };
 
-type JobTarget = {
-  connectorId: string;      // e.g. discord.main / slack.main
-  platform: string;         // "discord" / "slack" / ...
-  accountId: string;        // connector account id
+type JobDelivery = {
+  connectorId: string;      // connector instance id (e.g. discord.main)
   routeId: string;          // existing routing.routes key
-  routeChannelId: string;   // route mapping source channel id
-  chatId: string;           // target chat/channel/conversation id
+  channelId: string;        // result channel/chat id
   threadId?: string;
 };
 
@@ -193,7 +190,7 @@ type ScheduledJob = {
   schedule: JobSchedule;
   sessionPolicy?: "stateless" | "shared-session"; // default: stateless
   prompt: string;
-  target: JobTarget;
+  delivery: JobDelivery;
   createdAtMs: number;
   updatedAtMs: number;
   state: {
@@ -220,7 +217,10 @@ type ScheduledJob = {
 - `text = job.prompt`
 - `attachments = []`
 - `mentionedBot = true`（规避 `allowMentionsOnly` 在群聊时被忽略）
-- `routeId/chatId/threadId/routeChannelId` 来自 `job.target`
+- `routeId = job.delivery.routeId`
+- `chatId = job.delivery.channelId`
+- `threadId = job.delivery.threadId`（若有）
+- `routeChannelId` 在 v1 先与 `channelId` 保持一致（Discord-first）
 - `conversationKey` 使用 run 级唯一值（如 `cron:<jobId>:<runTs>`），不复用频道常规会话 key
 
 然后交给 Gateway 处理（建议新增 `handleScheduled` 包装入口，内部复用现有流程）。
@@ -232,7 +232,7 @@ type ScheduledJob = {
 1. Scheduler 路径不要走现有 `RuntimeRegistry.getOrCreate(convKey)` 的长期复用语义。
 2. 每次任务触发都创建一次临时 runtime（transient），执行完成后立即 `dispose`。
 3. provider 侧增加 `sessionPolicy` 提示（`ephemeral`），避免读取/写回持久会话文件。
-4. outbound 仍走 connector send/update，因此用户看到的仍是同一 channel/thread 回传。
+4. outbound 仍走 connector send（并按 `updateStrategy` 选择 create/update），因此用户看到的仍是同一 channel/thread 回传。
 5. 结论：**不共享会话状态 != 不创建 runtime**；只是 runtime 生命周期收敛到单次 run。
 
 ### 7.3 为什么不单独“直连 provider + 自己 send 某个 connector”
@@ -257,6 +257,7 @@ v1 建议实现以下最小鲁棒性（借鉴 openclaw）：
 3. 单任务执行超时（默认 10 分钟，可配置）。
 4. 连续错误指数退避（例如 30s/60s/5m/15m）。
 5. 定时器最迟 60s 唤醒一次，避免 wall clock 漂移造成长期不触发。
+6. 语义采用 **best-effort at-least-once**，v1 不承诺严格 exactly-once。
 
 ---
 
@@ -341,7 +342,7 @@ v1 建议实现以下最小鲁棒性（借鉴 openclaw）：
 1. 到点任务可触发并在目标 connector 会话看到回复（例如 Discord channel/thread）。
 2. 回复包含流式更新（不是只在结束时一次性发送）。
 3. 任务执行失败时能在对应 connector 会话看到错误信息。
-4. 进程重启后，不出现明显重复执行或长期不执行。
+4. 进程重启后可继续调度并恢复执行；在异常边界允许少量重复触发（best-effort）。
 5. Cron 引入后不改变现有用户消息会话的串行语义（两者隔离、互不污染）。
 6. 默认模式下，Cron 任务不会读取到该频道既有会话上下文（stateless 隔离）。
 7. 架构上只保留一条执行链路：`CronService -> Gateway.handleScheduled -> provider runtime -> EventForwarder -> connector`。
@@ -354,7 +355,8 @@ v1 建议实现以下最小鲁棒性（借鉴 openclaw）：
    - 缓解：统一术语，明确“默认是 transient runtime，不复用 conversation memory”。
 2. **allowMentionsOnly**：定时任务不是用户 @bot 消息，需显式标记 `mentionedBot=true` 或在调度入口跳过该限制。
 3. **时间语义**：cron 时区必须显式策略（默认系统时区，支持 per-job tz）。
-4. **重复触发**：需要通过 `runningAtMs` + 持久化时序控制避免同一任务并发重入。
+4. **重复触发**：在崩溃恢复等异常边界可能出现少量重复触发（best-effort at-least-once）。
+   - 缓解：通过 `runningAtMs` + 持久化时序控制尽量降低重复概率。
 5. **Connector 能力差异**：不同 connector 的 edit/thread/file 能力不同，需严格走插件能力判断与降级策略。
 6. **配置漂移**：cron 配置与 gateway 配置分离后，需在 `cron add/run` 时做 route/connector 存在性校验，避免引用失效。
 7. **停止语义差异**：stateless run 不共享聊天 conversation key，`stop` 需通过 cron 管理命令或 job-run 级 abort 实现。

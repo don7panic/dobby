@@ -30,6 +30,16 @@ interface GatewayOptions {
   logger: GatewayLogger;
 }
 
+interface MessageHandlingOptions {
+  source: "connector" | "scheduled";
+  useDedup: boolean;
+  stateless: boolean;
+  includeReplyTo: boolean;
+  conversationKeyOverride?: string;
+  sessionPolicy?: "shared-session" | "ephemeral";
+  timeoutMs?: number;
+}
+
 interface StopControlEvent {
   type: "stop";
   connectorId: string;
@@ -46,6 +56,17 @@ const TYPING_CHECK_INTERVAL_MS = 1_000;
 interface TypingController {
   touchOutput: () => void;
   stop: () => void;
+}
+
+export interface ScheduledExecutionRequest {
+  jobId: string;
+  runId: string;
+  connectorId: string;
+  routeId: string;
+  channelId: string;
+  threadId?: string;
+  prompt: string;
+  timeoutMs?: number;
 }
 
 function isImageAttachment(attachment: InboundAttachment): boolean {
@@ -98,6 +119,47 @@ export class Gateway {
     await this.options.runtimeRegistry.closeAll();
 
     this.started = false;
+  }
+
+  async handleScheduled(request: ScheduledExecutionRequest): Promise<void> {
+    const connector = this.connectorsById.get(request.connectorId);
+    if (!connector) {
+      throw new Error(`No connector found for scheduled run '${request.runId}' (${request.connectorId})`);
+    }
+
+    const syntheticInbound: InboundEnvelope = {
+      connectorId: request.connectorId,
+      platform: connector.platform,
+      accountId: request.connectorId,
+      routeId: request.routeId,
+      routeChannelId: request.channelId,
+      chatId: request.channelId,
+      ...(request.threadId ? { threadId: request.threadId } : {}),
+      messageId: `cron:${request.runId}`,
+      userId: "cron",
+      userName: "cron",
+      text: request.prompt,
+      attachments: [],
+      timestampMs: Date.now(),
+      raw: {
+        type: "cron",
+        jobId: request.jobId,
+        runId: request.runId,
+      },
+      isDirectMessage: false,
+      mentionedBot: true,
+      source: "scheduled",
+    };
+
+    await this.handleMessage(syntheticInbound, {
+      source: "scheduled",
+      useDedup: true,
+      stateless: true,
+      includeReplyTo: false,
+      conversationKeyOverride: `cron:${request.runId}`,
+      sessionPolicy: "ephemeral",
+      ...(request.timeoutMs !== undefined ? { timeoutMs: request.timeoutMs } : {}),
+    });
   }
 
   private outboundBaseFromInbound(message: InboundEnvelope): {
@@ -182,25 +244,37 @@ export class Gateway {
   }
 
   private async handleInbound(message: InboundEnvelope): Promise<void> {
+    await this.handleMessage(message, {
+      source: "connector",
+      useDedup: true,
+      stateless: false,
+      includeReplyTo: true,
+      sessionPolicy: "shared-session",
+    });
+  }
+
+  private async handleMessage(message: InboundEnvelope, handling: MessageHandlingOptions): Promise<void> {
     const connector = this.connectorsById.get(message.connectorId);
     if (!connector) {
       this.options.logger.warn({ connectorId: message.connectorId }, "No connector found for inbound message");
       return;
     }
 
-    const key = dedupKey(message);
-    if (this.options.dedupStore.has(key)) {
-      this.options.logger.debug({ dedupKey: key }, "Skipping duplicate message");
-      return;
+    if (handling.useDedup) {
+      const key = dedupKey(message);
+      if (this.options.dedupStore.has(key)) {
+        this.options.logger.debug({ dedupKey: key }, "Skipping duplicate message");
+        return;
+      }
+      this.options.dedupStore.add(key);
     }
-    this.options.dedupStore.add(key);
 
     const route = this.options.routeResolver.resolve(message.routeId);
     if (!route) {
       await connector.send({
         ...this.outboundBaseFromInbound(message),
         mode: "create",
-        replyToMessageId: message.messageId,
+        ...(handling.includeReplyTo ? { replyToMessageId: message.messageId } : {}),
         text: `No route configured for route '${message.routeId}'.`,
       });
       return;
@@ -220,13 +294,32 @@ export class Gateway {
       await connector.send({
         ...this.outboundBaseFromInbound(message),
         mode: "create",
-        replyToMessageId: message.messageId,
+        ...(handling.includeReplyTo ? { replyToMessageId: message.messageId } : {}),
         text: `Route runtime not available (provider='${providerId}', sandbox='${sandboxId}')`,
       });
       return;
     }
 
-    const convKey = conversationKey(message);
+    const convKey = handling.conversationKeyOverride ?? conversationKey(message);
+
+    if (handling.stateless) {
+      const runtime = await provider.createRuntime({
+        conversationKey: convKey,
+        route,
+        inbound: message,
+        executor,
+        ...(handling.sessionPolicy ? { sessionPolicy: handling.sessionPolicy } : {}),
+      });
+      try {
+        await this.processMessage(connector, runtime, route, message, {
+          includeReplyTo: handling.includeReplyTo,
+          ...(handling.timeoutMs !== undefined ? { timeoutMs: handling.timeoutMs } : {}),
+        });
+      } finally {
+        runtime.dispose();
+      }
+      return;
+    }
 
     await this.options.runtimeRegistry.getOrCreate(convKey, async () => {
       const runtime = await provider.createRuntime({
@@ -234,6 +327,7 @@ export class Gateway {
         route,
         inbound: message,
         executor,
+        ...(handling.sessionPolicy ? { sessionPolicy: handling.sessionPolicy } : {}),
       });
 
       return {
@@ -250,7 +344,9 @@ export class Gateway {
     });
 
     await this.options.runtimeRegistry.enqueue(convKey, async (runtime) => {
-      await this.processMessage(connector, runtime.runtime, route, message);
+      await this.processMessage(connector, runtime.runtime, route, message, {
+        includeReplyTo: handling.includeReplyTo,
+      });
     });
   }
 
@@ -259,6 +355,10 @@ export class Gateway {
     runtime: GatewayAgentRuntime,
     route: RouteResolution,
     message: InboundEnvelope,
+    options: {
+      includeReplyTo: boolean;
+      timeoutMs?: number;
+    },
   ): Promise<void> {
     this.options.logger.info(
       {
@@ -291,7 +391,7 @@ export class Gateway {
         },
         "Starting provider prompt",
       );
-      await runtime.prompt(payload.text, payload.images.length > 0 ? { images: payload.images } : undefined);
+      await this.promptWithOptionalTimeout(runtime, payload, options.timeoutMs);
       this.options.logger.info(
         {
           routeId: route.routeId,
@@ -305,24 +405,61 @@ export class Gateway {
     } catch (error) {
       this.options.logger.error({ err: error, routeId: route.routeId }, "Failed to process inbound message");
       const rootMessageId = forwarder.primaryMessageId();
+      const canEditExisting = connector.capabilities.updateStrategy === "edit" && rootMessageId !== null;
       await connector.send(
-        rootMessageId
+        canEditExisting
           ? {
             ...this.outboundBaseFromInbound(message),
             mode: "update",
-            targetMessageId: rootMessageId,
+            targetMessageId: rootMessageId!,
             text: `Error: ${error instanceof Error ? error.message : String(error)}`,
           }
           : {
             ...this.outboundBaseFromInbound(message),
             mode: "create",
-            replyToMessageId: message.messageId,
+            ...(
+              rootMessageId
+                ? { replyToMessageId: rootMessageId }
+                : options.includeReplyTo
+                ? { replyToMessageId: message.messageId }
+                : {}
+            ),
             text: `Error: ${error instanceof Error ? error.message : String(error)}`,
           },
       );
     } finally {
       unsubscribe?.();
       typingController.stop();
+    }
+  }
+
+  private async promptWithOptionalTimeout(
+    runtime: GatewayAgentRuntime,
+    payload: PromptPayload,
+    timeoutMs?: number,
+  ): Promise<void> {
+    if (timeoutMs === undefined || timeoutMs <= 0) {
+      await runtime.prompt(payload.text, payload.images.length > 0 ? { images: payload.images } : undefined);
+      return;
+    }
+
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      await Promise.race([
+        runtime.prompt(payload.text, payload.images.length > 0 ? { images: payload.images } : undefined),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            void runtime.abort().catch(() => {
+              // Best-effort abort on timeout.
+            });
+            reject(new Error(`Cron run timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 

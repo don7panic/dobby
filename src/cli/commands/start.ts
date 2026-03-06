@@ -1,4 +1,7 @@
 import { dirname, join } from "node:path";
+import { loadCronConfig } from "../../cron/config.js";
+import { CronService } from "../../cron/service.js";
+import { CronStore } from "../../cron/store.js";
 import { DedupStore } from "../../core/dedup-store.js";
 import { Gateway } from "../../core/gateway.js";
 import { loadGatewayConfig, RouteResolver } from "../../core/routing.js";
@@ -176,11 +179,33 @@ export async function runStartCommand(): Promise<void> {
     logger,
   });
 
+  const loadedCronConfig = await loadCronConfig({
+    gatewayConfigPath: configPath,
+    gatewayConfig: config,
+  });
+  const cronStore = new CronStore(loadedCronConfig.config.storeFile, loadedCronConfig.config.runLogFile, logger);
+  const cronService = new CronService({
+    config: loadedCronConfig.config,
+    store: cronStore,
+    gateway,
+    logger,
+  });
+
   await gateway.start();
-  logger.info({ configPath }, "Gateway started");
+  await cronService.start();
+  logger.info(
+    {
+      configPath,
+      cronConfigPath: loadedCronConfig.configPath,
+      cronConfigSource: loadedCronConfig.source,
+      cronEnabled: loadedCronConfig.config.enabled,
+    },
+    "Gateway started",
+  );
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down gateway");
+    await cronService.stop();
     await gateway.stop();
     await hostExecutor.close();
     await closeProviderInstances(providers, logger);

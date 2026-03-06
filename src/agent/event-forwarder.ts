@@ -1,4 +1,11 @@
-import type { ConnectorPlugin, GatewayAgentEvent, GatewayLogger, InboundEnvelope, Platform } from "../core/types.js";
+import type {
+  ConnectorPlugin,
+  ConnectorUpdateStrategy,
+  GatewayAgentEvent,
+  GatewayLogger,
+  InboundEnvelope,
+  Platform,
+} from "../core/types.js";
 
 interface ForwarderOptions {
   updateIntervalMs?: number;
@@ -17,30 +24,43 @@ function truncate(text: string, max?: number): string {
   return `${text.slice(0, max - suffix.length)}${suffix}`;
 }
 
-function splitForMaxLength(text: string, max?: number): string[] {
+function splitForMaxLength(text: string, max?: number, options: { preserveWhitespace?: boolean } = {}): string[] {
   if (max === undefined) {
     return [text];
+  }
+  if (max <= 0) {
+    return [""];
   }
   if (text.length <= max) {
     return [text];
   }
 
+  const preserveWhitespace = options.preserveWhitespace ?? false;
   const chunks: string[] = [];
-  let remaining = text;
+  let offset = 0;
 
-  while (remaining.length > max) {
-    let splitAt = remaining.lastIndexOf("\n", max);
-    if (splitAt < Math.floor(max * 0.6)) {
-      splitAt = max;
+  while (offset < text.length) {
+    const remainingLength = text.length - offset;
+    if (remainingLength <= max) {
+      chunks.push(text.slice(offset));
+      break;
     }
 
-    const chunk = remaining.slice(0, splitAt).trimEnd();
-    chunks.push(chunk.length > 0 ? chunk : remaining.slice(0, max));
-    remaining = remaining.slice(splitAt).trimStart();
-  }
+    if (preserveWhitespace) {
+      chunks.push(text.slice(offset, offset + max));
+      offset += max;
+      continue;
+    }
 
-  if (remaining.length > 0) {
-    chunks.push(remaining);
+    const hardLimit = offset + max;
+    let splitAt = text.lastIndexOf("\n", hardLimit);
+    if (splitAt < offset + Math.floor(max * 0.6)) {
+      splitAt = hardLimit;
+    } else {
+      splitAt += 1;
+    }
+    chunks.push(text.slice(offset, splitAt));
+    offset = splitAt;
   }
 
   return chunks;
@@ -49,12 +69,16 @@ function splitForMaxLength(text: string, max?: number): string[] {
 export class EventForwarder {
   private rootMessageId: string | null;
   private responseText = "";
+  private appendEmittedText = "";
   private pendingFlush: NodeJS.Timeout | null = null;
+  private flushSerial: Promise<void> = Promise.resolve();
   private readonly pendingOps: Array<Promise<unknown>> = [];
   private readonly updateIntervalMs: number;
   private readonly toolMessageMode: "none" | "errors" | "all";
   private readonly maxTextLength: number | undefined;
   private readonly onOutboundActivity: (() => void) | undefined;
+  private readonly updateStrategy: ConnectorUpdateStrategy;
+  private lastEditPrimaryText: string | null = null;
 
   constructor(
     private readonly connector: ConnectorPlugin,
@@ -67,6 +91,7 @@ export class EventForwarder {
     this.updateIntervalMs = options.updateIntervalMs ?? 400;
     this.toolMessageMode = options.toolMessageMode ?? "none";
     this.onOutboundActivity = options.onOutboundActivity;
+    this.updateStrategy = this.connector.capabilities.updateStrategy;
     const capabilityMaxTextLength = this.connector.capabilities.maxTextLength;
     this.maxTextLength = typeof capabilityMaxTextLength === "number" && capabilityMaxTextLength > 0
       ? capabilityMaxTextLength
@@ -80,14 +105,18 @@ export class EventForwarder {
   handleEvent = (event: GatewayAgentEvent): void => {
     if (event.type === "message_delta") {
       this.responseText += event.delta;
-      this.scheduleFlush();
+      if (this.updateStrategy !== "final_only") {
+        this.scheduleFlush();
+      }
       return;
     }
 
     if (event.type === "message_complete") {
       if (event.text.trim().length > 0) {
         this.responseText = event.text;
-        void this.flushNow();
+        if (this.updateStrategy !== "final_only") {
+          void this.flushNow();
+        }
       }
       return;
     }
@@ -100,7 +129,7 @@ export class EventForwarder {
         },
         "Tool execution started",
       );
-      if (this.toolMessageMode === "all") {
+      if (this.updateStrategy !== "final_only" && this.toolMessageMode === "all") {
         this.enqueueSend(`_-> Running tool: ${event.toolName}_`);
       }
       return;
@@ -116,7 +145,10 @@ export class EventForwarder {
         },
         event.isError ? "Tool execution finished with error" : "Tool execution finished",
       );
-      if (this.toolMessageMode === "all" || (this.toolMessageMode === "errors" && event.isError)) {
+      if (
+        this.updateStrategy !== "final_only" &&
+        (this.toolMessageMode === "all" || (this.toolMessageMode === "errors" && event.isError))
+      ) {
         const prefix = event.isError ? "ERR" : "OK";
         const header = `*${prefix} ${event.toolName}*\n\`\`\`\n`;
         const footer = "\n```";
@@ -129,46 +161,27 @@ export class EventForwarder {
     }
 
     if (event.type === "status") {
+      if (this.updateStrategy === "final_only") {
+        return;
+      }
       this.enqueueSend(`_${event.message}_`);
     }
   };
 
   async finalize(): Promise<void> {
-    await this.flushNow();
-
-    if (this.responseText.trim().length === 0) {
-      await this.sendPrimary("(completed with no text response)");
+    if (this.updateStrategy === "final_only") {
+      await this.finalizeFinalOnly();
       await Promise.allSettled(this.pendingOps);
       return;
     }
 
-    const chunks = splitForMaxLength(this.responseText, this.maxTextLength);
-    if (chunks.length > 1) {
-      try {
-        await this.sendPrimary(chunks[0] ?? "");
-
-        for (const chunk of chunks.slice(1)) {
-          await this.connector.send({
-            ...this.baseEnvelope(),
-            mode: "create",
-            ...(this.rootMessageId ? { replyToMessageId: this.rootMessageId } : {}),
-            text: chunk,
-          });
-          this.noteOutboundActivity();
-        }
-      } catch (error) {
-        this.logger.warn(
-          {
-            err: error,
-            connectorId: this.inbound.connectorId,
-            chatId: this.inbound.chatId,
-            targetMessageId: this.rootMessageId,
-          },
-          "Failed to send split final response to Discord",
-        );
-      }
+    if (this.updateStrategy === "append") {
+      await this.finalizeAppend();
+      await Promise.allSettled(this.pendingOps);
+      return;
     }
 
+    await this.finalizeEdit();
     await Promise.allSettled(this.pendingOps);
   }
 
@@ -189,31 +202,46 @@ export class EventForwarder {
   }
 
   private async flushNow(): Promise<void> {
-    if (this.pendingFlush) {
-      clearTimeout(this.pendingFlush);
-      this.pendingFlush = null;
-    }
+    const run = this.flushSerial.then(async () => {
+      if (this.pendingFlush) {
+        clearTimeout(this.pendingFlush);
+        this.pendingFlush = null;
+      }
 
-    if (this.responseText.trim().length === 0) {
-      return;
-    }
+      if (this.responseText.trim().length === 0) {
+        return;
+      }
 
-    const content = truncate(this.responseText, this.maxTextLength);
+      try {
+        if (this.updateStrategy === "append") {
+          await this.flushAppendProgress();
+          return;
+        }
 
-    try {
-      await this.sendPrimary(content);
-    } catch (error) {
-      this.logger.warn(
-        {
-          err: error,
-          connectorId: this.inbound.connectorId,
-          chatId: this.inbound.chatId,
-          targetMessageId: this.rootMessageId,
-          contentLength: content.length,
-        },
-        "Failed to flush streaming update",
-      );
-    }
+        if (this.updateStrategy === "edit") {
+          const content = truncate(this.responseText, this.maxTextLength);
+          await this.sendEditPrimary(content);
+        }
+      } catch (error) {
+        this.logger.warn(
+          {
+            err: error,
+            connectorId: this.inbound.connectorId,
+            chatId: this.inbound.chatId,
+            targetMessageId: this.rootMessageId,
+            contentLength: this.responseText.length,
+            updateStrategy: this.updateStrategy,
+          },
+          "Failed to flush streaming update",
+        );
+      }
+    });
+
+    this.flushSerial = run.catch(() => {
+      // keep chain alive for future flush calls
+    });
+
+    await run;
   }
 
   private enqueueSend(text: string): void {
@@ -235,14 +263,18 @@ export class EventForwarder {
             chatId: this.inbound.chatId,
             replyToMessageId: this.rootMessageId,
           },
-          "Failed to send threaded tool update",
+          "Failed to send connector update message",
         );
       });
 
     this.pendingOps.push(promise);
   }
 
-  private async sendPrimary(text: string): Promise<void> {
+  private async sendEditPrimary(text: string): Promise<void> {
+    if (this.rootMessageId && this.lastEditPrimaryText === text) {
+      return;
+    }
+
     if (this.rootMessageId) {
       await this.connector.send({
         ...this.baseEnvelope(),
@@ -250,6 +282,7 @@ export class EventForwarder {
         targetMessageId: this.rootMessageId,
         text,
       });
+      this.lastEditPrimaryText = text;
       this.noteOutboundActivity();
       return;
     }
@@ -260,7 +293,119 @@ export class EventForwarder {
       text,
     });
     this.rootMessageId = created.messageId ?? this.rootMessageId;
+    this.lastEditPrimaryText = text;
     this.noteOutboundActivity();
+  }
+
+  private async sendCreate(text: string): Promise<void> {
+    const created = await this.connector.send({
+      ...this.baseEnvelope(),
+      mode: "create",
+      ...(this.rootMessageId ? { replyToMessageId: this.rootMessageId } : {}),
+      text,
+    });
+    this.rootMessageId = this.rootMessageId ?? created.messageId ?? null;
+    this.noteOutboundActivity();
+  }
+
+  private async flushAppendProgress(): Promise<void> {
+    if (this.responseText.startsWith(this.appendEmittedText)) {
+      const unsent = this.responseText.slice(this.appendEmittedText.length);
+      if (unsent.length === 0) {
+        return;
+      }
+      const chunks = splitForMaxLength(unsent, this.maxTextLength, { preserveWhitespace: true });
+      for (const chunk of chunks) {
+        await this.sendCreate(chunk);
+      }
+      this.appendEmittedText = this.responseText;
+      return;
+    }
+
+    const snapshotChunks = splitForMaxLength(this.responseText, this.maxTextLength);
+    for (const chunk of snapshotChunks) {
+      await this.sendCreate(chunk);
+    }
+    this.appendEmittedText = this.responseText;
+  }
+
+  private async finalizeEdit(): Promise<void> {
+    await this.flushNow();
+
+    if (this.responseText.trim().length === 0) {
+      await this.sendEditPrimary("(completed with no text response)");
+      return;
+    }
+
+    const chunks = splitForMaxLength(this.responseText, this.maxTextLength);
+    try {
+      await this.sendEditPrimary(chunks[0] ?? "");
+
+      for (const chunk of chunks.slice(1)) {
+        await this.sendCreate(chunk);
+      }
+    } catch (error) {
+      this.logger.warn(
+        {
+          err: error,
+          connectorId: this.inbound.connectorId,
+          chatId: this.inbound.chatId,
+          targetMessageId: this.rootMessageId,
+        },
+        "Failed to send split final response",
+      );
+    }
+  }
+
+  private async finalizeFinalOnly(): Promise<void> {
+    if (this.pendingFlush) {
+      clearTimeout(this.pendingFlush);
+      this.pendingFlush = null;
+    }
+
+    try {
+      if (this.responseText.trim().length === 0) {
+        await this.sendCreate("(completed with no text response)");
+        return;
+      }
+
+      const chunks = splitForMaxLength(this.responseText, this.maxTextLength);
+      for (const chunk of chunks) {
+        await this.sendCreate(chunk);
+      }
+    } catch (error) {
+      this.logger.warn(
+        {
+          err: error,
+          connectorId: this.inbound.connectorId,
+          chatId: this.inbound.chatId,
+          updateStrategy: this.updateStrategy,
+        },
+        "Failed to send final-only response",
+      );
+    }
+  }
+
+  private async finalizeAppend(): Promise<void> {
+    await this.flushNow();
+
+    if (this.responseText.trim().length > 0 || this.appendEmittedText.trim().length > 0) {
+      return;
+    }
+
+    try {
+      await this.sendCreate("(completed with no text response)");
+    } catch (error) {
+      this.logger.warn(
+        {
+          err: error,
+          connectorId: this.inbound.connectorId,
+          chatId: this.inbound.chatId,
+          updateStrategy: this.updateStrategy,
+        },
+        "Failed to send append fallback response",
+      );
+    }
   }
 
   private noteOutboundActivity(): void {

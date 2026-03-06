@@ -31,6 +31,7 @@ export interface InboundEnvelope {
   raw: unknown;
   isDirectMessage: boolean;
   mentionedBot: boolean;
+  source?: "connector" | "scheduled";
 }
 
 export interface OutboundAttachment {
@@ -74,8 +75,10 @@ export interface ConnectorContext {
   }) => Promise<void>;
 }
 
+export type ConnectorUpdateStrategy = "edit" | "final_only" | "append";
+
 export interface ConnectorCapabilities {
-  supportsEdit: boolean;
+  updateStrategy: ConnectorUpdateStrategy;
   supportsThread: boolean;
   supportsTyping: boolean;
   supportsFileUpload: boolean;
@@ -186,6 +189,7 @@ export interface ProviderRuntimeCreateOptions {
   route: RouteResolution;
   inbound: InboundEnvelope;
   executor: Executor;
+  sessionPolicy?: "shared-session" | "ephemeral";
 }
 
 export interface ProviderInstance {

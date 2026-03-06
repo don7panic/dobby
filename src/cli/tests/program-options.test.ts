@@ -66,3 +66,15 @@ test("config schema help shows list/show subcommands", () => {
   assert.match(help, /list \[options\]/);
   assert.match(help, /show \[options\] <contributionId>/);
 });
+
+test("cron help shows core subcommands", () => {
+  const program = buildProgram();
+  const cronCommand = program.commands.find((command) => command.name() === "cron");
+  assert.ok(cronCommand);
+
+  const help = cronCommand.helpInformation();
+  assert.match(help, /add \[options\] <name>/);
+  assert.match(help, /list \[options\]/);
+  assert.match(help, /run \[options\] <jobId>/);
+  assert.match(help, /remove \[options\] <jobId>/);
+});

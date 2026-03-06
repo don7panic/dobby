@@ -200,7 +200,9 @@ class PiProviderInstanceImpl implements ProviderInstance {
   }
 
   async createRuntime(options: ProviderRuntimeCreateOptions): Promise<GatewayAgentRuntime> {
-    const sessionFile = this.getSessionFilePath(options.inbound);
+    const sessionFile = options.sessionPolicy === "ephemeral"
+      ? this.getEphemeralSessionFilePath(options.conversationKey)
+      : this.getSessionFilePath(options.inbound);
     const sessionDir = dirname(sessionFile);
 
     await mkdir(this.dataConfig.sessionsDir, { recursive: true });
@@ -393,6 +395,14 @@ class PiProviderInstanceImpl implements ProviderInstance {
       channelSegment,
       threadSegment,
       `${chatSegment}.jsonl`,
+    );
+  }
+
+  private getEphemeralSessionFilePath(conversationKey: string): string {
+    return join(
+      this.dataConfig.sessionsDir,
+      "_cron-ephemeral",
+      `${safeSegment(conversationKey)}.jsonl`,
     );
   }
 }

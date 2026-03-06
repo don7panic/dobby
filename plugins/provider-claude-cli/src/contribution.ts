@@ -1499,22 +1499,27 @@ class ClaudeCliProviderInstanceImpl implements ProviderInstance {
       );
     }
 
-    const sessionMetaPath = this.getSessionMetaPath(options.inbound);
+    const isEphemeral = options.sessionPolicy === "ephemeral";
+    const sessionMetaPath = isEphemeral
+      ? this.getEphemeralSessionMetaPath(options.conversationKey)
+      : this.getSessionMetaPath(options.inbound);
     let restoredSessionId: string | undefined;
 
-    try {
-      const raw = await readFile(sessionMetaPath, "utf-8");
-      const parsed = JSON.parse(raw) as SessionMeta;
-      if (typeof parsed.sessionId === "string" && parsed.sessionId.trim().length > 0) {
-        restoredSessionId = parsed.sessionId;
-      }
-    } catch (error) {
-      const asErr = error as NodeJS.ErrnoException;
-      if (asErr.code !== "ENOENT") {
-        this.logger.warn(
-          { err: error, providerInstance: this.id, conversationKey: options.conversationKey },
-          "Failed to load Claude CLI session metadata; starting fresh session",
-        );
+    if (!isEphemeral) {
+      try {
+        const raw = await readFile(sessionMetaPath, "utf-8");
+        const parsed = JSON.parse(raw) as SessionMeta;
+        if (typeof parsed.sessionId === "string" && parsed.sessionId.trim().length > 0) {
+          restoredSessionId = parsed.sessionId;
+        }
+      } catch (error) {
+        const asErr = error as NodeJS.ErrnoException;
+        if (asErr.code !== "ENOENT") {
+          this.logger.warn(
+            { err: error, providerInstance: this.id, conversationKey: options.conversationKey },
+            "Failed to load Claude CLI session metadata; starting fresh session",
+          );
+        }
       }
     }
 
@@ -1577,6 +1582,14 @@ class ClaudeCliProviderInstanceImpl implements ProviderInstance {
       channelSegment,
       threadSegment,
       `${chatSegment}.claude-cli-session.json`,
+    );
+  }
+
+  private getEphemeralSessionMetaPath(conversationKey: string): string {
+    return join(
+      this.dataConfig.sessionsDir,
+      "_cron-ephemeral",
+      `${safeSegment(conversationKey)}.claude-cli-session.json`,
     );
   }
 }
