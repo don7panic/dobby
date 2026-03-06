@@ -53,7 +53,7 @@ export class DiscordConnector implements ConnectorPlugin {
   readonly platform = "discord" as const;
   readonly name = "discord";
   readonly capabilities: ConnectorCapabilities = {
-    supportsEdit: true,
+    updateStrategy: "edit",
     supportsThread: true,
     supportsTyping: true,
     supportsFileUpload: true,

@@ -188,6 +188,10 @@ npm run plugins:setup:local
 
 - 必须包含 `dobby.manifest.json`。
 - `manifest.contributions[*].entry` 必须指向插件包内构建好的 JS 文件（如 `./dist/contribution.js`）。
+- connector capability 必须声明 `updateStrategy`（`edit | final_only | append`）：
+  - `edit`：网关使用 create + update 流式覆盖（Discord 等）。
+  - `final_only`：网关抑制中间状态，仅发送最终结果/错误。
+  - `append`：网关将中间增量按 create 追加，不使用 update。
 - 插件第三方依赖必须放在插件自身 `dependencies`。
 - 插件实现不得依赖宿主源码路径或宿主构建产物路径。
 

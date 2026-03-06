@@ -8,7 +8,7 @@
       "kind": "connector",
       "entry": "./dist/contribution.js",
       "capabilities": {
-        "supportsEdit": true,
+        "updateStrategy": "edit",
         "supportsThread": true,
         "supportsTyping": true,
         "supportsFileUpload": true
