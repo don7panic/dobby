@@ -257,18 +257,6 @@ export class DiscordConnector implements ConnectorPlugin {
         return;
       }
 
-      if (message.content.trim().toLowerCase() === "stop") {
-        await this.ctx.emitControl({
-          type: "stop",
-          connectorId: this.id,
-          platform: "discord",
-          accountId: this.botUserId,
-          chatId: message.channelId,
-          ...(message.channel.isThread() ? { threadId: message.channelId } : {}),
-        });
-        return;
-      }
-
       const inbound = await mapDiscordMessage(
         message,
         this.id,

@@ -1,72 +1,141 @@
 import type { ConversationRuntime, GatewayLogger } from "./types.js";
 
 interface RuntimeEntry {
-  runtime: ConversationRuntime;
+  runtime: ConversationRuntime | undefined;
   tail: Promise<void>;
+  epoch: number;
+  scheduledTasks: number;
 }
 
 export class RuntimeRegistry {
   private readonly entries = new Map<string, RuntimeEntry>();
-  private readonly creating = new Map<string, Promise<ConversationRuntime>>();
 
   constructor(private readonly logger: GatewayLogger) {}
 
-  async getOrCreate(key: string, createFn: () => Promise<ConversationRuntime>): Promise<ConversationRuntime> {
-    const existing = this.entries.get(key);
-    if (existing) return existing.runtime;
+  async run(
+    key: string,
+    createFn: () => Promise<ConversationRuntime>,
+    task: (runtime: ConversationRuntime) => Promise<void>,
+  ): Promise<void> {
+    const entry = this.getOrCreateEntry(key);
+    const scheduledEpoch = entry.epoch;
+    entry.scheduledTasks += 1;
+    const run = entry.tail.then(async () => {
+      if (scheduledEpoch !== entry.epoch) return;
 
-    const pending = this.creating.get(key);
-    if (pending) return pending;
+      let runtime = entry.runtime;
+      if (!runtime) {
+        const created = await createFn();
+        if (scheduledEpoch !== entry.epoch) {
+          await this.closeRuntime(key, created, "Discarding runtime created for stale queued task");
+          return;
+        }
 
-    const creation = (async () => {
-      const runtime = await createFn();
-      this.entries.set(key, { runtime, tail: Promise.resolve() });
-      return runtime;
-    })().finally(() => {
-      this.creating.delete(key);
+        entry.runtime = created;
+        runtime = created;
+      }
+
+      await task(runtime);
     });
 
-    this.creating.set(key, creation);
-    return creation;
-  }
-
-  async enqueue(key: string, task: (runtime: ConversationRuntime) => Promise<void>): Promise<void> {
-    const entry = this.entries.get(key);
-    if (!entry) {
-      throw new Error(`Runtime missing for key '${key}'`);
-    }
-
-    const run = entry.tail.then(() => task(entry.runtime));
-    entry.tail = run.catch((error) => {
-      this.logger.error({ err: error, conversationKey: key }, "Queued task failed");
+    const managedRun = run.finally(() => {
+      entry.scheduledTasks = Math.max(0, entry.scheduledTasks - 1);
     });
 
-    await run;
+    this.attachTail(key, entry, managedRun, "Queued task failed");
+    await managedRun;
   }
 
   async abort(key: string): Promise<boolean> {
     const entry = this.entries.get(key);
+    if (!entry?.runtime) return false;
+    return this.abortRuntime(key, entry.runtime, "Failed to abort runtime");
+  }
+
+  async cancel(key: string): Promise<boolean> {
+    const entry = this.entries.get(key);
+    if (!entry) return false;
+    if (entry.scheduledTasks === 0) return false;
+
+    entry.epoch += 1;
+    if (!entry.runtime) return true;
+    return this.abortRuntime(key, entry.runtime, "Failed to cancel runtime");
+  }
+
+  async reset(key: string): Promise<boolean> {
+    const entry = this.entries.get(key);
     if (!entry) return false;
 
+    entry.epoch += 1;
+    if (entry.runtime) {
+      await this.abortRuntime(key, entry.runtime, "Failed to abort runtime during reset");
+    }
+
+    const close = entry.tail.then(async () => {
+      const runtime = entry.runtime;
+      entry.runtime = undefined;
+      if (!runtime) return;
+      await this.closeRuntime(key, runtime, "Failed to close runtime during reset");
+    });
+
+    this.attachTail(key, entry, close);
+    await close;
+    return true;
+  }
+
+  async closeAll(): Promise<void> {
+    const keys = [...this.entries.keys()];
+    await Promise.all(keys.map((key) => this.reset(key)));
+    this.entries.clear();
+  }
+
+  private getOrCreateEntry(key: string): RuntimeEntry {
+    const existing = this.entries.get(key);
+    if (existing) return existing;
+
+    const entry: RuntimeEntry = {
+      runtime: undefined,
+      tail: Promise.resolve(),
+      epoch: 0,
+      scheduledTasks: 0,
+    };
+    this.entries.set(key, entry);
+    return entry;
+  }
+
+  private attachTail(
+    key: string,
+    entry: RuntimeEntry,
+    run: Promise<void>,
+    errorMessage = "Queued task failed",
+  ): void {
+    const nextTail = run.catch((error) => {
+      this.logger.error({ err: error, conversationKey: key }, errorMessage);
+    });
+    entry.tail = nextTail;
+    void nextTail.finally(() => {
+      if (this.entries.get(key) !== entry) return;
+      if (entry.runtime !== undefined) return;
+      if (entry.tail !== nextTail) return;
+      this.entries.delete(key);
+    });
+  }
+
+  private async abortRuntime(key: string, runtime: ConversationRuntime, errorMessage: string): Promise<boolean> {
     try {
-      await entry.runtime.runtime.abort();
+      await runtime.runtime.abort();
       return true;
     } catch (error) {
-      this.logger.error({ err: error, conversationKey: key }, "Failed to abort runtime");
+      this.logger.error({ err: error, conversationKey: key }, errorMessage);
       return false;
     }
   }
 
-  async closeAll(): Promise<void> {
-    for (const [key, entry] of this.entries.entries()) {
-      try {
-        await entry.runtime.close();
-      } catch (error) {
-        this.logger.error({ err: error, conversationKey: key }, "Failed to close runtime");
-      }
+  private async closeRuntime(key: string, runtime: ConversationRuntime, errorMessage: string): Promise<void> {
+    try {
+      await runtime.close();
+    } catch (error) {
+      this.logger.error({ err: error, conversationKey: key }, errorMessage);
     }
-
-    this.entries.clear();
-    this.creating.clear();
   }
 }

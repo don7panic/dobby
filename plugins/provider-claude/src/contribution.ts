@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import {
@@ -23,6 +23,7 @@ import type {
   ProviderContributionModule,
   ProviderInstance,
   ProviderInstanceCreateOptions,
+  ProviderSessionArchiveOptions,
   ProviderRuntimeCreateOptions,
   SpawnOptions as GatewaySpawnOptions,
   SpawnedProcess as GatewaySpawnedProcess,
@@ -221,6 +222,36 @@ function isResumeError(error: unknown): boolean {
     message.includes("not exist") ||
     message.includes("cannot resume")
   );
+}
+
+function formatArchiveStamp(timestampMs: number): string {
+  return new Date(timestampMs).toISOString().replaceAll(":", "-").replaceAll(".", "-");
+}
+
+async function archiveSessionPath(
+  sessionsDir: string,
+  sourcePath: string,
+  archivedAtMs: number,
+): Promise<string | undefined> {
+  const relativePath = relative(sessionsDir, sourcePath);
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error(`Session path '${sourcePath}' is outside sessions dir '${sessionsDir}'`);
+  }
+
+  const archiveRoot = join(sessionsDir, "_archived", `${formatArchiveStamp(archivedAtMs)}-${randomUUID().slice(0, 8)}`);
+  const archivePath = join(archiveRoot, relativePath);
+  await mkdir(dirname(archivePath), { recursive: true });
+
+  try {
+    await rename(sourcePath, archivePath);
+    return archivePath;
+  } catch (error) {
+    const asErr = error as NodeJS.ErrnoException;
+    if (asErr.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 class ClaudeGatewayRuntime implements GatewayAgentRuntime {
@@ -824,22 +855,27 @@ class ClaudeProviderInstanceImpl implements ProviderInstance {
   async createRuntime(options: ProviderRuntimeCreateOptions): Promise<GatewayAgentRuntime> {
     await mkdir(this.dataConfig.sessionsDir, { recursive: true });
 
-    const sessionMetaPath = this.getSessionMetaPath(options.inbound);
+    const isEphemeral = options.sessionPolicy === "ephemeral";
+    const sessionMetaPath = isEphemeral
+      ? this.getEphemeralSessionMetaPath(options.conversationKey)
+      : this.getSessionMetaPath(options.inbound);
     let restoredSessionId: string | undefined;
 
-    try {
-      const raw = await readFile(sessionMetaPath, "utf-8");
-      const parsed = JSON.parse(raw) as SessionMeta;
-      if (typeof parsed.sessionId === "string" && parsed.sessionId.trim().length > 0) {
-        restoredSessionId = parsed.sessionId;
-      }
-    } catch (error) {
-      const asErr = error as NodeJS.ErrnoException;
-      if (asErr.code !== "ENOENT") {
-        this.logger.warn(
-          { err: error, providerInstance: this.id, conversationKey: options.conversationKey },
-          "Failed to load Claude session metadata; starting fresh session",
-        );
+    if (!isEphemeral) {
+      try {
+        const raw = await readFile(sessionMetaPath, "utf-8");
+        const parsed = JSON.parse(raw) as SessionMeta;
+        if (typeof parsed.sessionId === "string" && parsed.sessionId.trim().length > 0) {
+          restoredSessionId = parsed.sessionId;
+        }
+      } catch (error) {
+        const asErr = error as NodeJS.ErrnoException;
+        if (asErr.code !== "ENOENT") {
+          this.logger.warn(
+            { err: error, providerInstance: this.id, conversationKey: options.conversationKey },
+            "Failed to load Claude session metadata; starting fresh session",
+          );
+        }
       }
     }
 
@@ -887,6 +923,18 @@ class ClaudeProviderInstanceImpl implements ProviderInstance {
     );
   }
 
+  async archiveSession(options: ProviderSessionArchiveOptions): Promise<{ archived: boolean; archivePath?: string }> {
+    const sessionMetaPath = options.sessionPolicy === "ephemeral"
+      ? this.getEphemeralSessionMetaPath(options.conversationKey)
+      : this.getSessionMetaPath(options.inbound);
+    const archivePath = await archiveSessionPath(
+      this.dataConfig.sessionsDir,
+      sessionMetaPath,
+      options.archivedAtMs ?? Date.now(),
+    );
+    return archivePath ? { archived: true, archivePath } : { archived: false };
+  }
+
   private getSessionMetaPath(inbound: ProviderRuntimeCreateOptions["inbound"]): string {
     const guildSegment = safeSegment(inbound.guildId ?? "dm");
     const connectorSegment = safeSegment(inbound.connectorId);
@@ -903,6 +951,14 @@ class ClaudeProviderInstanceImpl implements ProviderInstance {
       channelSegment,
       threadSegment,
       `${chatSegment}.claude-session.json`,
+    );
+  }
+
+  private getEphemeralSessionMetaPath(conversationKey: string): string {
+    return join(
+      this.dataConfig.sessionsDir,
+      "_cron-ephemeral",
+      `${safeSegment(conversationKey)}.claude-session.json`,
     );
   }
 }

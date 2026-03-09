@@ -192,9 +192,22 @@ export interface ProviderRuntimeCreateOptions {
   sessionPolicy?: "shared-session" | "ephemeral";
 }
 
+export interface ProviderSessionArchiveOptions {
+  conversationKey: string;
+  inbound: InboundEnvelope;
+  sessionPolicy?: "shared-session" | "ephemeral";
+  archivedAtMs?: number;
+}
+
+export interface ProviderSessionArchiveResult {
+  archived: boolean;
+  archivePath?: string;
+}
+
 export interface ProviderInstance {
   id: string;
   createRuntime(options: ProviderRuntimeCreateOptions): Promise<GatewayAgentRuntime>;
+  archiveSession?(options: ProviderSessionArchiveOptions): Promise<ProviderSessionArchiveResult>;
   close?: () => Promise<void>;
 }
 

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import type {
@@ -10,6 +10,7 @@ import type {
   ProviderContributionModule,
   ProviderInstance,
   ProviderInstanceCreateOptions,
+  ProviderSessionArchiveOptions,
   ProviderRuntimeCreateOptions,
 } from "@dobby.ai/plugin-sdk";
 
@@ -175,6 +176,36 @@ function toMessageBody(message: unknown): Record<string, unknown> | null {
     return wrapped;
   }
   return message;
+}
+
+function formatArchiveStamp(timestampMs: number): string {
+  return new Date(timestampMs).toISOString().replaceAll(":", "-").replaceAll(".", "-");
+}
+
+async function archiveSessionPath(
+  sessionsDir: string,
+  sourcePath: string,
+  archivedAtMs: number,
+): Promise<string | undefined> {
+  const relativePath = relative(sessionsDir, sourcePath);
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error(`Session path '${sourcePath}' is outside sessions dir '${sessionsDir}'`);
+  }
+
+  const archiveRoot = join(sessionsDir, "_archived", `${formatArchiveStamp(archivedAtMs)}-${randomUUID().slice(0, 8)}`);
+  const archivePath = join(archiveRoot, relativePath);
+  await mkdir(dirname(archivePath), { recursive: true });
+
+  try {
+    await rename(sourcePath, archivePath);
+    return archivePath;
+  } catch (error) {
+    const asErr = error as NodeJS.ErrnoException;
+    if (asErr.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 function isReasoningLikeEventType(value: string): boolean {
@@ -1564,6 +1595,18 @@ class ClaudeCliProviderInstanceImpl implements ProviderInstance {
       systemPrompt,
       restoredSessionId,
     );
+  }
+
+  async archiveSession(options: ProviderSessionArchiveOptions): Promise<{ archived: boolean; archivePath?: string }> {
+    const sessionMetaPath = options.sessionPolicy === "ephemeral"
+      ? this.getEphemeralSessionMetaPath(options.conversationKey)
+      : this.getSessionMetaPath(options.inbound);
+    const archivePath = await archiveSessionPath(
+      this.dataConfig.sessionsDir,
+      sessionMetaPath,
+      options.archivedAtMs ?? Date.now(),
+    );
+    return archivePath ? { archived: true, archivePath } : { archived: false };
   }
 
   private getSessionMetaPath(inbound: ProviderRuntimeCreateOptions["inbound"]): string {

@@ -186,7 +186,8 @@ npm run start:local --
 在 Discord 中验证：
 1. 在已映射频道发送消息（群聊若 `allowMentionsOnly=true` 需 @bot）。
 2. Bot 先回复 `_Thinking..._`，随后流式更新。
-3. 发送 `stop` 可中断当前运行。
+3. 发送 `stop`、`/stop` 或 `/cancel` 可取消当前会话中正在执行和排队中的任务。
+4. 发送 `/new` 或 `/reset` 会归档当前会话状态，并让下一条消息从新会话开始。
 
 ## 9. 切换到 Docker / BoxLite（可选）
 

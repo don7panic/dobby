@@ -1,5 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, extname, join, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import {
   AuthStorage,
@@ -29,6 +30,7 @@ import type {
   ProviderContributionModule,
   ProviderInstance,
   ProviderInstanceCreateOptions,
+  ProviderSessionArchiveOptions,
   ProviderRuntimeCreateOptions,
 } from "@dobby.ai/plugin-sdk";
 
@@ -115,6 +117,36 @@ function normalizeMaybePath(configBaseDir: string, value: string | undefined): s
     return resolve(process.env.HOME ?? "", trimmed.slice(2));
   }
   return resolve(configBaseDir, trimmed);
+}
+
+function formatArchiveStamp(timestampMs: number): string {
+  return new Date(timestampMs).toISOString().replaceAll(":", "-").replaceAll(".", "-");
+}
+
+async function archiveSessionPath(
+  sessionsDir: string,
+  sourcePath: string,
+  archivedAtMs: number,
+): Promise<string | undefined> {
+  const relativePath = relative(sessionsDir, sourcePath);
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error(`Session path '${sourcePath}' is outside sessions dir '${sessionsDir}'`);
+  }
+
+  const archiveRoot = join(sessionsDir, "_archived", `${formatArchiveStamp(archivedAtMs)}-${randomUUID().slice(0, 8)}`);
+  const archivePath = join(archiveRoot, relativePath);
+  await mkdir(dirname(archivePath), { recursive: true });
+
+  try {
+    await rename(sourcePath, archivePath);
+    return archivePath;
+  } catch (error) {
+    const asErr = error as NodeJS.ErrnoException;
+    if (asErr.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 class PiGatewayRuntime implements GatewayAgentRuntime {
@@ -253,6 +285,18 @@ class PiProviderInstanceImpl implements ProviderInstance {
     }
 
     return new PiGatewayRuntime(session);
+  }
+
+  async archiveSession(options: ProviderSessionArchiveOptions): Promise<{ archived: boolean; archivePath?: string }> {
+    const sessionFile = options.sessionPolicy === "ephemeral"
+      ? this.getEphemeralSessionFilePath(options.conversationKey)
+      : this.getSessionFilePath(options.inbound);
+    const archivePath = await archiveSessionPath(
+      this.dataConfig.sessionsDir,
+      sessionFile,
+      options.archivedAtMs ?? Date.now(),
+    );
+    return archivePath ? { archived: true, archivePath } : { archived: false };
   }
 
   private buildTools(

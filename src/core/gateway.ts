@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { EventForwarder } from "../agent/event-forwarder.js";
 import type { Executor } from "../sandbox/executor.js";
+import { parseControlCommand, type ControlCommand } from "./control-command.js";
 import type { DedupStore } from "./dedup-store.js";
 import { RouteResolver } from "./routing.js";
 import { RuntimeRegistry } from "./runtime-registry.js";
@@ -190,6 +191,18 @@ export class Gateway {
     };
   }
 
+  private async sendCommandReply(
+    connector: ConnectorPlugin,
+    message: InboundEnvelope,
+    text: string,
+  ): Promise<void> {
+    await connector.send({
+      ...this.outboundBaseFromInbound(message),
+      mode: "create",
+      text,
+    });
+  }
+
   private startTypingKeepAlive(connector: ConnectorPlugin, message: InboundEnvelope): TypingController {
     const sendTypingMethod = connector.sendTyping;
     if (!connector.capabilities.supportsTyping || !sendTypingMethod) {
@@ -269,6 +282,23 @@ export class Gateway {
       this.options.dedupStore.add(key);
     }
 
+    if (handling.source === "connector") {
+      const command = parseControlCommand(message.text);
+      if (command) {
+        try {
+          await this.handleCommand(connector, message, command);
+        } catch (error) {
+          this.options.logger.error({ err: error, messageId: message.messageId }, "Failed to handle control command");
+          await this.sendCommandReply(
+            connector,
+            message,
+            `Error: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        return;
+      }
+    }
+
     const route = this.options.routeResolver.resolve(message.routeId);
     if (!route) {
       await connector.send({
@@ -321,7 +351,7 @@ export class Gateway {
       return;
     }
 
-    await this.options.runtimeRegistry.getOrCreate(convKey, async () => {
+    await this.options.runtimeRegistry.run(convKey, async () => {
       const runtime = await provider.createRuntime({
         conversationKey: convKey,
         route,
@@ -341,9 +371,7 @@ export class Gateway {
           runtime.dispose();
         },
       };
-    });
-
-    await this.options.runtimeRegistry.enqueue(convKey, async (runtime) => {
+    }, async (runtime) => {
       await this.processMessage(connector, runtime.runtime, route, message, {
         includeReplyTo: handling.includeReplyTo,
       });
@@ -503,19 +531,73 @@ export class Gateway {
     };
   }
 
+  private async handleCommand(
+    connector: ConnectorPlugin,
+    message: InboundEnvelope,
+    command: ControlCommand,
+  ): Promise<void> {
+    const convKey = conversationKey(message);
+    if (command === "cancel") {
+      const cancelled = await this.options.runtimeRegistry.cancel(convKey);
+      this.options.logger.info({ conversationKey: convKey, cancelled }, "Conversation cancel requested");
+      await this.sendCommandReply(
+        connector,
+        message,
+        cancelled ? "_Cancelled current session tasks._" : "_No active or queued session tasks to cancel._",
+      );
+      return;
+    }
+
+    const route = this.options.routeResolver.resolve(message.routeId);
+    if (!route) {
+      await this.sendCommandReply(connector, message, `No route configured for route '${message.routeId}'.`);
+      return;
+    }
+
+    const providerId = route.profile.providerId ?? this.options.config.providers.defaultProviderId;
+    const provider = this.options.providers.get(providerId);
+    if (!provider) {
+      throw new Error(`Route provider not available (provider='${providerId}')`);
+    }
+    if (!provider.archiveSession) {
+      throw new Error(`Provider '${providerId}' does not support session archival`);
+    }
+
+    const hadRuntime = await this.options.runtimeRegistry.reset(convKey);
+    const archiveResult = await provider.archiveSession({
+      conversationKey: convKey,
+      inbound: message,
+      sessionPolicy: "shared-session",
+      archivedAtMs: message.timestampMs,
+    });
+
+    this.options.logger.info(
+      {
+        conversationKey: convKey,
+        providerId,
+        hadRuntime,
+        archived: archiveResult.archived,
+        archivePath: archiveResult.archivePath ?? null,
+      },
+      "New session requested",
+    );
+
+    await this.sendCommandReply(connector, message, "_Started a new session._");
+  }
+
   private async handleControl(event: StopControlEvent): Promise<void> {
     const convKey = `${event.connectorId}:${event.platform}:${event.accountId}:${event.chatId}:${event.threadId ?? "root"}`;
     const connector = this.connectorsById.get(event.connectorId);
-    const aborted = await this.options.runtimeRegistry.abort(convKey);
+    const cancelled = await this.options.runtimeRegistry.cancel(convKey);
 
-    this.options.logger.info({ conversationKey: convKey, aborted }, "Stop requested");
+    this.options.logger.info({ conversationKey: convKey, cancelled }, "Stop requested");
     if (!connector) return;
 
     try {
       await connector.send({
         ...this.outboundBaseFromControl(event),
         mode: "create",
-        text: aborted ? "_Stopped current run._" : "_No active run to stop._",
+        text: cancelled ? "_Cancelled current session tasks._" : "_No active or queued session tasks to cancel._",
       });
     } catch (error) {
       this.options.logger.warn({ err: error, conversationKey: convKey }, "Failed to send stop acknowledgement");
