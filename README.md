@@ -1,209 +1,371 @@
 # dobby
 
-Discord-first 本地 Agent Gateway（扩展系统 v3）。
+Discord-first 本地 Agent Gateway。宿主只负责 CLI、网关主流程、扩展加载和计划任务调度；Provider / Connector / Sandbox 通过扩展 contribution 接入。
 
-核心目标：
-- 宿主只负责 gateway 核心与扩展加载。
-- 插件按需安装到独立扩展目录（类似 VSCode extension）。
-- `allowList` 只声明启用，不负责安装。
+当前仓库内维护的扩展包：
 
-## 架构
+- `@dobby.ai/connector-discord`
+- `@dobby.ai/provider-pi`
+- `@dobby.ai/provider-claude-cli`
+- `@dobby.ai/provider-claude`
+- `@dobby.ai/sandbox-core`
 
-- `src/core`：gateway 主流程、路由、去重、runtime registry。
-- `src/extension`：扩展 store 管理、manifest 解析、扩展加载与注册。
-- `src/sandbox`：执行器抽象与内置 host executor。
-- `plugins/*`：插件包源码示例（发布后以外部 npm 包安装）。
+文档默认以 `@dobby.ai/*` 为准，不再把旧 `@dobby/*` 作为推荐配置。
 
-说明：`plugins/*` 目录是源码参考，不是宿主运行时回退入口。插件包需要自行构建出 `dist/*.js` 后再发布/安装。
+## 核心能力
 
-## 扩展安装模型（V3）
+- Discord 映射频道 / 线程 -> route -> provider / sandbox
+- conversation 级 runtime 复用与串行化
+- 扩展 store 安装、启用、列举与 schema 驱动配置
+- Discord 流式回复、typing、附件下载与图片输入
+- cron 调度：一次性、固定间隔、cron expression
+- 交互式初始化：`dobby init`
+- 交互式配置：`dobby configure` / `dobby config edit`
+- 诊断与保守修复：`dobby doctor [--fix]`
 
-- 扩展安装目录固定为：`<data.rootDir>/extensions`。
-- 扩展安装后位于：`<data.rootDir>/extensions/node_modules/*`。
-- 启动时 loader 只从该目录解析扩展包。
-- 若 `extensions.allowList` 中包未安装，启动会 fail-fast，并提示安装命令。
+## 架构概览
 
-## CLI
+```text
+Discord / Cron
+    -> Connector
+    -> Gateway
+       -> Dedup / Control Commands / Route Resolver
+       -> Runtime Registry
+       -> Provider Runtime
+       -> Sandbox Executor
+    -> Event Forwarder
+    -> Connector Reply
+```
 
-网关二进制现在支持：
+主要目录：
 
-- `start`（默认）
-- `init`
-- `configure`
-- `config show|list|edit`
-- `config schema list|show`
-- `bot list|set`
-- `channel list|set|unset`
-- `route list|set|remove`
-- `extension install <packageSpec>`
-- `extension uninstall <packageName>`
-- `extension list`
-- `doctor [--fix]`
+- `src/cli`：CLI 程序和各子命令
+- `src/core`：gateway 主流程、路由、去重、runtime registry
+- `src/extension`：扩展 store、manifest 解析、扩展加载与实例化
+- `src/cron`：计划任务配置、持久化与调度
+- `src/sandbox`：宿主执行器接口与 `HostExecutor`
+- `plugins/*`：本地维护的扩展源码
+- `config/*.example.json`：示例配置
 
-## NPM Scope 变更（硬切）
+注意：运行时只从 `<data.rootDir>/extensions/node_modules` 加载扩展，不会从 `plugins/*` 源码目录 fallback。
 
-- 扩展包 scope 已统一为 `@dobby.ai/*`。
-- 旧 scope `@dobby/*` 不再保证可用。
-- 现有配置需手动替换 `extensions.allowList[*].package` 中的包名。
+## 环境要求
 
-## Config 命令变更（硬切）
-
-- 路径式命令已移除：`config get|set|unset`
-- 新命令：
-  - `config show [section] [--json]`
-  - `config list [section] [--json]`
-  - `config edit`
-  - `config schema list [--json]`
-  - `config schema show <contributionId> [--json]`
-  - `config edit` / `configure` 在 provider/connector 实例配置时会优先读取扩展 `configSchema` 动态提问（默认只问关键字段，advanced 选项按需展开；无 schema 时会先提示原因，再决定是否走 JSON 输入）
-- 映射关系：
-  - `config get ...` -> `config show` 或 `config list`
-  - `config set ...` -> `config edit`
-  - `config unset ...` -> 使用专用删除命令（如 `channel unset`、`route remove`、`extension uninstall`）
+- Node.js `>=20`
+- npm
+- 对应 provider / connector 的外部运行条件
+  - 例如 Discord bot token
+  - Claude CLI 或 Claude Agent SDK 所需认证
+  - 可选的 Docker / Boxlite 运行环境
 
 ## 快速开始
 
-1. 安装宿主依赖
+1. 安装依赖
 
 ```bash
 npm install
 ```
 
-2. 构建宿主
+2. 构建
 
 ```bash
 npm run build
 ```
 
-3. 初始化配置（最小可运行）
-
-```bash
-dobby init
-```
-
-说明：`init` 现在会在交互中分开选择 provider 与 connector。
-说明：`init` 在安装扩展后，会优先按扩展暴露的 `configSchema` 动态询问 provider/connector 的配置字段（当前 Discord connector 仍保留专用引导配置流程）。
-说明：当选择多个 provider 时，`init` 会额外让你显式选择默认 route 绑定的 provider，且 `providers.defaultProviderId` 会跟随该选择。
-说明：若选择 `provider.pi`，且 `models.custom.json` 不存在，`init` 会自动生成（仅缺失时生成，不覆盖已有文件）。
-说明：`init` 现在是一次性命令；若配置已存在会直接失败，请改用 `dobby config edit` 或 `dobby configure`。
-
-如果你是从源码直接运行（未全局安装 `dobby`），可用：
+3. 初始化最小可运行配置
 
 ```bash
 npm run start -- init
 ```
 
-4. 启动
+`init` 会做这些事情：
+
+- 交互选择 provider 和 connector
+- 自动安装所选扩展到运行时 extension store
+- 优先使用扩展暴露的 `configSchema` 生成配置
+- 生成 `gateway.json`
+- 选择 `provider.pi` 且缺少 `models.custom.json` 时，自动创建该文件
+
+4. 运行诊断
 
 ```bash
-dobby start
+npm run start -- doctor
 ```
 
-源码运行方式：
+5. 启动网关
 
 ```bash
 npm run start --
 ```
 
-5. （可选）安装并启用额外扩展
+说明：
+
+- `dobby` 无子命令时，默认等价于 `dobby start`
+- 在仓库内直接运行时，CLI 会自动使用 `./config/gateway.json`
+- 也可以通过环境变量覆盖配置路径：
 
 ```bash
-dobby extension install @dobby.ai/provider-claude-cli --enable
-dobby extension install @dobby.ai/sandbox-core --enable
+DOBBY_CONFIG_PATH=./config/gateway.json npm run start --
 ```
 
-运行前检查（推荐）：
+## 配置文件路径
 
-```bash
-dobby doctor
-```
+gateway 配置路径优先级：
 
-配置路径优先级：
-1. `DOBBY_CONFIG_PATH`（若设置）
-2. 在 `dobby` 仓库内运行时自动使用 `./config/gateway.json`
+1. `DOBBY_CONFIG_PATH`
+2. 当前目录向上查找 dobby 仓库时的 `./config/gateway.json`
 3. 默认 `~/.dobby/gateway.json`
+
+cron 配置路径优先级：
+
+1. `--cron-config`
+2. `DOBBY_CRON_CONFIG_PATH`
+3. 与 gateway 配置同目录的 `cron.json`
+4. `<data.rootDir>/state/cron.config.json`
+
+如果 cron 配置文件不存在，启动时会自动生成默认文件。
+
+## 运行时目录
+
+`data.rootDir` 默认是 `./data`。加载后会生成这些目录：
+
+- `sessions/`
+- `attachments/`
+- `logs/`
+- `state/`
+- `extensions/`
+
+扩展 store 实际路径是：
+
+```text
+<data.rootDir>/extensions/node_modules/*
+```
+
+## CLI 概览
+
+顶层命令：
+
+```bash
+dobby start
+dobby init
+dobby configure
+dobby doctor [--fix]
+```
+
+配置与拓扑：
+
+```bash
+dobby config show [section] [--json]
+dobby config list [section] [--json]
+dobby config edit [--section provider|connector|routing]
+dobby config schema list [--json]
+dobby config schema show <contributionId> [--json]
+
+dobby bot list [--json]
+dobby bot set <connectorId> [--name <name>] [--token <token>]
+
+dobby channel list [--connector <id>] [--json]
+dobby channel set <channelId> <routeId> [--connector <id>]
+dobby channel unset <channelId> [--connector <id>]
+
+dobby route list [--json]
+dobby route set <routeId> [--project-root <path>] [--tools full|readonly] [--provider-id <id>] [--sandbox-id <id>] [--mentions-only true|false] [--default]
+dobby route remove <routeId> [--cascade-channel-maps]
+```
+
+扩展管理：
+
+```bash
+dobby extension install <packageSpec>
+dobby extension install <packageSpec> --enable
+dobby extension uninstall <packageName>
+dobby extension list [--json]
+```
+
+计划任务：
+
+```bash
+dobby cron add <name> --prompt <text> --connector <id> --route <id> --channel <id> [--thread <id>] [--at <iso> | --every-ms <ms> | --cron <expr>] [--tz <tz>]
+dobby cron list [--json]
+dobby cron status [jobId] [--json]
+dobby cron run <jobId>
+dobby cron update <jobId> ...
+dobby cron pause <jobId>
+dobby cron resume <jobId>
+dobby cron remove <jobId>
+```
+
+## Gateway 配置模型
+
+顶层结构：
+
+- `extensions`
+- `providers`
+- `connectors`
+- `sandboxes`
+- `routing`
+- `data`
+
+关键语义：
+
+- `extensions.allowList`
+  - 只声明启用状态，不负责安装
+- `providers.instances[*].contributionId`
+  - 指向某个 provider contribution
+- `connectors.instances[*].config.botChannelMap`
+  - channelId -> routeId
+- `routing.routes[*]`
+  - 定义 `projectRoot`、`tools`、`systemPromptFile`、`allowMentionsOnly`、`providerId`、`sandboxId`
+- `sandboxes.defaultSandboxId`
+  - 未指定时默认使用 `host.builtin`
+
+当前代码还保留但未真正生效的字段：
+
+- `routing.routes[*].maxConcurrentTurns`
+- cron job 的 `sessionPolicy`
+
+示例配置：
+
+- gateway：[`config/gateway.example.json`](config/gateway.example.json)
+- cron：[`config/cron.example.json`](config/cron.example.json)
+- provider.pi 自定义模型：[`config/models.custom.example.json`](config/models.custom.example.json)
+
+## 扩展包与 contribution
+
+仓库内现有 contribution：
+
+- `connector.discord`
+- `provider.pi`
+- `provider.claude-cli`
+- `provider.claude`
+- `sandbox.boxlite`
+- `sandbox.docker`
+
+`dobby init` 当前只内建这些 starter 选择：
+
+- provider：`provider.pi`、`provider.claude-cli`
+- connector：`connector.discord`
+
+`provider.claude` 与 sandbox 相关扩展需要手工安装和配置，例如：
+
+```bash
+npm run start -- extension install @dobby.ai/provider-claude --enable
+npm run start -- extension install @dobby.ai/sandbox-core --enable
+```
+
+`--enable` 的行为：
+
+- 把包写入 `extensions.allowList`
+- 按 manifest contribution 生成默认实例模板
+- 在需要时补默认 provider
+
+## 计划任务 / Cron
+
+job 支持三种调度方式：
+
+- `--at <ISO timestamp>`
+- `--every-ms <ms>`
+- `--cron "<expr>" [--tz <timezone>]`
 
 示例：
 
 ```bash
-DOBBY_CONFIG_PATH=/tmp/gateway.dev.json npm run start -- config show providers --json
+npm run start -- cron add daily-report \
+  --prompt "Summarize open issues in this repo" \
+  --connector discord.main \
+  --route main \
+  --channel 1234567890 \
+  --cron "0 9 * * 1-5" \
+  --tz "Asia/Shanghai"
 ```
-多 bot 场景建议为每个 Discord connector 实例配置独立的 `botName`、`botToken` 与 `botChannelMap`。
 
-## 本地插件开发（plugins 目录）
+说明：
 
-`plugins/*` 目录用于本地开发插件源码。宿主构建不会编译它们，需要插件各自构建。
-这些本地流程统一由 `scripts/local-extensions.mjs` 驱动。
+- `cron run <jobId>` 只是把 job 标记为“下一次 scheduler tick 执行”
+- 需要已有一个正在运行的 `dobby start`
+- 当前 scheduled run 一律按 stateless / ephemeral 执行
 
-1. 安装插件开发依赖
+## Discord 连接器的当前行为
+
+- 只处理已映射的 guild channel，DM 目前禁用
+- 线程消息使用父频道 ID 做 route 查找
+- 会自动下载附件到本地
+- 图片会作为 image input 传给 provider
+- 非图片附件会把路径注入 prompt
+- 内置 reconnect watchdog
+  - `reconnectStaleMs` 默认 `60000`
+  - `reconnectCheckIntervalMs` 默认 `10000`
+
+## 会话控制命令
+
+在 Discord 频道内可用：
+
+- `stop`
+- `/stop`
+- `/cancel`
+- `/new`
+- `/reset`
+
+当前语义：
+
+- `stop` / `/cancel`：取消该会话当前和排队中的任务
+- `/new` / `/reset`：重置当前会话，并在 provider 支持时归档旧 session
+
+## 本地插件开发
+
+开发流程：
 
 ```bash
 npm run plugins:install
-```
-
-说明：该命令只会安装 `plugins/*` 目录下各插件包的开发依赖，不会安装到运行时扩展目录。
-
-2. 构建本地插件
-
-```bash
+npm run plugins:check
 npm run plugins:build
-```
-
-3. 把本地插件安装到扩展 store
-
-```bash
 npm run extensions:install:local
 ```
 
-或一步完成开发依赖安装 + 构建 + 安装到扩展 store：
+或一步完成：
 
 ```bash
 npm run plugins:setup:local
 ```
 
-说明：
-- `@dobby.ai/plugin-sdk` 在插件中按 `peerDependencies`（可选）声明，开发态通过 `devDependencies` 的 `file:../plugin-sdk` 解决类型依赖。
-- 运行态只加载 `<data.rootDir>/extensions/node_modules`，不会回退到宿主 `plugins/*`。
-- 默认配置 `$HOME/.dobby/gateway.json` 的 `data.rootDir` 为 `./data`，因此默认扩展安装目录是 `$HOME/.dobby/data/extensions`。
+补充说明：
 
-## 配置语义
+- `plugins/*` 是扩展源码，不是运行时加载入口
+- 本地扩展安装到 extension store 后，才会被宿主识别
+- `@dobby.ai/plugin-sdk` 在插件里按 `peerDependencies` 暴露，开发期通过 `file:../plugin-sdk` 提供
 
-- `extensions.allowList`：声明“允许并启用”的扩展包。
-- `providers/connectors/sandboxes.instances`：实例化 contribution。
-- `connectors.instances.<id>.config.botChannelMap`：绑定 channel -> route。
-- `routing`：定义 route -> provider/sandbox。
+## 检查与测试
 
-注意：
-- `allowList` 与安装状态分离。即使配置了 allowList，包未安装也会启动失败。
-- 扩展安装/卸载不会自动修改 `gateway.json`。
-- 默认 sandbox 是 `host.builtin`，可通过 `routing.routes.*.sandboxId` 覆盖到 docker/boxlite 实例。
-
-## Teamwork Handoff Loop（Draft）
-
-`dobby` 的 Teamwork Handoff Loop 方案用于“同一 channel 多 bot 串行协作”场景，核心语义是 Task 生命周期 + actor handoff（`start/handoff/complete/cancel`），并通过 `maxRound` 与 `maxPingPong` 防止无限回环。  
-默认仍以“显式开启 + allowlist 授权”为前提。  
-详见：`docs/TEAMWORK_HANDOFF_DESIGN.md`
-
-## 插件契约（作者侧）
-
-- 必须包含 `dobby.manifest.json`。
-- `manifest.contributions[*].entry` 必须指向插件包内构建好的 JS 文件（如 `./dist/contribution.js`）。
-- connector capability 必须声明 `updateStrategy`（`edit | final_only | append`）：
-  - `edit`：网关使用 create + update 流式覆盖（Discord 等）。
-  - `final_only`：网关抑制中间状态，仅发送最终结果/错误。
-  - `append`：网关将中间增量按 create 追加，不使用 update。
-- 插件第三方依赖必须放在插件自身 `dependencies`。
-- 插件实现不得依赖宿主源码路径或宿主构建产物路径。
-
-## 开发检查
+最小校验：
 
 ```bash
 npm run check
 npm run build
+npm run test:cli
 ```
 
-## 进一步文档
+如果改了插件代码，建议再执行：
 
-- 运行与排障手册：`<repo-root>/docs/RUNBOOK.md`
-- 扩展系统设计：`<repo-root>/docs/EXTENSION_SYSTEM_ARCHITECTURE.md`
-- Teamwork Handoff 设计：`<repo-root>/docs/TEAMWORK_HANDOFF_DESIGN.md`
+```bash
+npm run plugins:check
+npm run plugins:build
+```
+
+当前测试现状：
+
+- 已有 CLI / core 的 focused tests
+- 暂无完整的 e2e 自动化
+- 仍建议做一次手工 Discord 冒烟
+
+## 本地运行小提示
+
+- `npm run dev:local` 与 `npm run start:local` 会尝试读取 `.env`
+- 普通 `npm run start -- ...` 不会自动载入 `.env`
+- 配置编辑流优先使用扩展 `configSchema`，无 schema 时退回 JSON 输入
+
+## 相关文档
+
+- 扩展系统：[`docs/EXTENSION_SYSTEM_ARCHITECTURE.md`](docs/EXTENSION_SYSTEM_ARCHITECTURE.md)
+- cron 设计：[`docs/CRON_SCHEDULER_DESIGN.md`](docs/CRON_SCHEDULER_DESIGN.md)
+- 运行与排障：[`docs/RUNBOOK.md`](docs/RUNBOOK.md)
+- Teamwork handoff：[`docs/TEAMWORK_HANDOFF_DESIGN.md`](docs/TEAMWORK_HANDOFF_DESIGN.md)
