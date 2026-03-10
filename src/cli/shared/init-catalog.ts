@@ -1,4 +1,4 @@
-import type { RawRouteProfile } from "./config-types.js";
+import type { RawBindingConfig, RawRouteProfile } from "./config-types.js";
 import {
   DEFAULT_DISCORD_CONNECTOR_INSTANCE_ID,
   DISCORD_CONNECTOR_CONTRIBUTION_ID,
@@ -53,6 +53,8 @@ export interface InitSelectionResult {
   connectorContributionId: string;
   connectorConfig: Record<string, unknown>;
   routeProfile: RawRouteProfile;
+  bindingId: string;
+  bindingConfig: RawBindingConfig;
 }
 
 const PROVIDER_CATALOG: Record<InitProviderChoiceId, ProviderCatalogEntry> = {
@@ -97,37 +99,22 @@ const CONNECTOR_CATALOG: Record<InitConnectorChoiceId, ConnectorCatalogEntry> = 
   },
 };
 
-/**
- * Returns static provider choices supported by `dobby init`.
- */
 export function listInitProviderChoices(): ProviderCatalogEntry[] {
   return Object.values(PROVIDER_CATALOG);
 }
 
-/**
- * Returns static connector choices supported by `dobby init`.
- */
 export function listInitConnectorChoices(): ConnectorCatalogEntry[] {
   return Object.values(CONNECTOR_CATALOG);
 }
 
-/**
- * Type guard for provider choice ids in init flow.
- */
 export function isInitProviderChoiceId(value: string): value is InitProviderChoiceId {
   return Object.prototype.hasOwnProperty.call(PROVIDER_CATALOG, value);
 }
 
-/**
- * Type guard for connector choice ids in init flow.
- */
 export function isInitConnectorChoiceId(value: string): value is InitConnectorChoiceId {
   return Object.prototype.hasOwnProperty.call(CONNECTOR_CATALOG, value);
 }
 
-/**
- * Builds init output config from selected provider/connector choices.
- */
 export function createInitSelectionConfig(
   providerChoiceIds: InitProviderChoiceId[],
   connectorChoiceId: InitConnectorChoiceId,
@@ -156,15 +143,6 @@ export function createInitSelectionConfig(
   const primaryProviderChoice = PROVIDER_CATALOG[context.routeProviderChoiceId];
   const connectorChoice = CONNECTOR_CATALOG[connectorChoiceId];
 
-  const baseRoute: RawRouteProfile = {
-    projectRoot: context.projectRoot,
-    tools: "full",
-    systemPromptFile: "",
-    allowMentionsOnly: !context.allowAllMessages,
-    maxConcurrentTurns: 1,
-    sandboxId: "host.builtin",
-  };
-
   return {
     providerChoiceIds: dedupedProviderChoiceIds,
     routeProviderChoiceId: primaryProviderChoice.id,
@@ -187,15 +165,25 @@ export function createInitSelectionConfig(
     connectorConfig: {
       botName: context.botName,
       botToken: context.botToken,
-      botChannelMap: {
-        [context.channelId]: context.routeId,
-      },
       reconnectStaleMs: 60_000,
       reconnectCheckIntervalMs: 10_000,
     },
     routeProfile: {
-      ...baseRoute,
-      providerId: primaryProviderChoice.instanceId,
+      projectRoot: context.projectRoot,
+      tools: "full",
+      systemPromptFile: "",
+      mentions: context.allowAllMessages ? "optional" : "required",
+      provider: primaryProviderChoice.instanceId,
+      sandbox: "host.builtin",
+    },
+    bindingId: `${connectorChoice.instanceId}.${context.routeId}`,
+    bindingConfig: {
+      connector: connectorChoice.instanceId,
+      source: {
+        type: "channel",
+        id: context.channelId,
+      },
+      route: context.routeId,
     },
   };
 }

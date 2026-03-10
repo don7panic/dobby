@@ -4,6 +4,8 @@ import type { Executor } from "../sandbox/executor.js";
 
 export type Platform = string;
 export type ToolProfile = "full" | "readonly";
+export type MentionPolicy = "required" | "optional";
+export type BindingSourceType = "channel" | "chat";
 export type ExtensionKind = "provider" | "connector" | "sandbox";
 export type ExtensionApiVersion = "1.0";
 export const BUILTIN_HOST_SANDBOX_ID = "host.builtin";
@@ -17,13 +19,17 @@ export interface InboundAttachment {
   remoteUrl?: string;
 }
 
+export interface BindingSource {
+  type: BindingSourceType;
+  id: string;
+}
+
 export interface InboundEnvelope {
   connectorId: string;
   platform: Platform;
   accountId: string;
   guildId?: string;
-  routeId: string;
-  routeChannelId: string;
+  source: BindingSource;
   chatId: string;
   threadId?: string;
   messageId: string;
@@ -35,7 +41,6 @@ export interface InboundEnvelope {
   raw: unknown;
   isDirectMessage: boolean;
   mentionedBot: boolean;
-  source?: "connector" | "scheduled";
 }
 
 export interface OutboundAttachment {
@@ -83,6 +88,7 @@ export type ConnectorUpdateStrategy = "edit" | "final_only" | "append";
 
 export interface ConnectorCapabilities {
   updateStrategy: ConnectorUpdateStrategy;
+  supportedSources: BindingSourceType[];
   supportsThread: boolean;
   supportsTyping: boolean;
   supportsFileUpload: boolean;
@@ -100,19 +106,25 @@ export interface ConnectorPlugin {
   stop(): Promise<void>;
 }
 
+export interface RouteDefaultsConfig {
+  provider: string;
+  sandbox: string;
+  tools: ToolProfile;
+  mentions: MentionPolicy;
+}
+
 export interface RouteProfile {
   projectRoot: string;
   tools: ToolProfile;
+  mentions: MentionPolicy;
+  provider: string;
+  sandbox: string;
   systemPromptFile?: string;
-  allowMentionsOnly: boolean;
-  maxConcurrentTurns: number;
-  providerId?: string;
-  sandboxId?: string;
 }
 
-export interface RoutingConfig {
-  defaultRouteId?: string;
-  routes: Record<string, RouteProfile>;
+export interface RoutesConfig {
+  defaults: RouteDefaultsConfig;
+  items: Record<string, RouteProfile>;
 }
 
 export interface ExtensionPackageConfig {
@@ -125,22 +137,32 @@ export interface ExtensionsConfig {
 }
 
 export interface ExtensionInstanceConfig {
-  contributionId: string;
+  type: string;
   config: Record<string, unknown>;
 }
 
 export interface ProvidersConfig {
-  defaultProviderId: string;
-  instances: Record<string, ExtensionInstanceConfig>;
+  default: string;
+  items: Record<string, ExtensionInstanceConfig>;
 }
 
 export interface ConnectorsConfig {
-  instances: Record<string, ExtensionInstanceConfig>;
+  items: Record<string, ExtensionInstanceConfig>;
 }
 
 export interface SandboxesConfig {
-  defaultSandboxId?: string;
-  instances: Record<string, ExtensionInstanceConfig>;
+  default?: string;
+  items: Record<string, ExtensionInstanceConfig>;
+}
+
+export interface BindingConfig {
+  connector: string;
+  source: BindingSource;
+  route: string;
+}
+
+export interface BindingsConfig {
+  items: Record<string, BindingConfig>;
 }
 
 export interface DataConfig {
@@ -157,13 +179,19 @@ export interface GatewayConfig {
   providers: ProvidersConfig;
   connectors: ConnectorsConfig;
   sandboxes: SandboxesConfig;
-  routing: RoutingConfig;
+  routes: RoutesConfig;
+  bindings: BindingsConfig;
   data: DataConfig;
 }
 
 export interface RouteResolution {
   routeId: string;
   profile: RouteProfile;
+}
+
+export interface BindingResolution {
+  bindingId: string;
+  config: BindingConfig;
 }
 
 export interface PromptPayload {

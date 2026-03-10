@@ -25,7 +25,6 @@ const DEFAULT_RECONNECT_CHECK_INTERVAL_MS = 10_000;
 export interface DiscordConnectorConfig {
   botName: string;
   botToken: string;
-  botChannelMap: Record<string, string>;
   reconnectStaleMs?: number;
   reconnectCheckIntervalMs?: number;
 }
@@ -54,6 +53,7 @@ export class DiscordConnector implements ConnectorPlugin {
   readonly name = "discord";
   readonly capabilities: ConnectorCapabilities = {
     updateStrategy: "edit",
+    supportedSources: ["channel"],
     supportsThread: true,
     supportsTyping: true,
     supportsFileUpload: true,
@@ -250,19 +250,13 @@ export class DiscordConnector implements ConnectorPlugin {
 
       if (message.author.bot) return;
 
-      const routeChannelId = message.channel.isThread() && message.channel.parentId ? message.channel.parentId : message.channelId;
-      const routeId = this.config.botChannelMap[routeChannelId];
-      if (!routeId) {
-        this.logger.debug({ connectorId: this.id, routeChannelId }, "Ignoring Discord message from unmapped channel");
-        return;
-      }
+      const sourceId = message.channel.isThread() && message.channel.parentId ? message.channel.parentId : message.channelId;
 
       const inbound = await mapDiscordMessage(
         message,
         this.id,
         this.botUserId,
-        routeId,
-        routeChannelId,
+        sourceId,
         this.attachmentsRoot,
         this.logger,
       );

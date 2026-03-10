@@ -6,7 +6,7 @@ import { ExtensionLoader } from "../../extension/loader.js";
 import { ExtensionRegistry } from "../../extension/registry.js";
 import { ensureGatewayConfigShape } from "./config-mutators.js";
 import { resolveDataRootDir } from "./config-io.js";
-import type { RawExtensionInstanceConfig, RawGatewayConfig } from "./config-types.js";
+import type { RawExtensionItemConfig, RawGatewayConfig } from "./config-types.js";
 
 export interface ContributionSchemaCatalogEntry {
   contributionId: string;
@@ -25,7 +25,7 @@ export interface ContributionSchemaListItem {
 interface InstanceValidationTask {
   section: "providers" | "connectors" | "sandboxes";
   instanceId: string;
-  instance: RawExtensionInstanceConfig;
+  instance: RawExtensionItemConfig;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -86,7 +86,7 @@ function buildValidationErrorMessage(
     .slice(0, 5)
     .map((error) => {
       const suffix = formatErrorPath(error.instancePath);
-      return `${task.section}.instances['${task.instanceId}'].config${suffix}: ${error.message ?? "invalid"}`;
+      return `${task.section}.items['${task.instanceId}']${suffix}: ${error.message ?? "invalid"}`;
     })
     .join("; ");
 
@@ -176,17 +176,17 @@ export async function applyAndValidateContributionSchemas(
   const validators = new Map<string, ValidateFunction>();
 
   const tasks: InstanceValidationTask[] = [
-    ...Object.entries(next.providers.instances).map(([instanceId, instance]) => ({
+    ...Object.entries(next.providers.items).map(([instanceId, instance]) => ({
       section: "providers" as const,
       instanceId,
       instance,
     })),
-    ...Object.entries(next.connectors.instances).map(([instanceId, instance]) => ({
+    ...Object.entries(next.connectors.items).map(([instanceId, instance]) => ({
       section: "connectors" as const,
       instanceId,
       instance,
     })),
-    ...Object.entries(next.sandboxes.instances).map(([instanceId, instance]) => ({
+    ...Object.entries(next.sandboxes.items).map(([instanceId, instance]) => ({
       section: "sandboxes" as const,
       instanceId,
       instance,
@@ -194,7 +194,7 @@ export async function applyAndValidateContributionSchemas(
   ];
 
   for (const task of tasks) {
-    const contributionId = task.instance.contributionId;
+    const contributionId = task.instance.type;
     const schema = schemaByContribution.get(contributionId);
     if (!schema) {
       continue;
@@ -207,12 +207,21 @@ export async function applyAndValidateContributionSchemas(
       validate = compiled;
     }
 
-    const instanceConfig = isRecord(task.instance.config) ? task.instance.config : {};
-    task.instance.config = instanceConfig;
+    const { type: _type, ...instanceConfig } = task.instance;
     const valid = validate(instanceConfig);
     if (!valid) {
       throw new Error(buildValidationErrorMessage(task, contributionId, validate.errors));
     }
+
+    for (const key of Object.keys(task.instance)) {
+      if (key !== "type") {
+        delete task.instance[key];
+      }
+    }
+    Object.assign(task.instance, {
+      type: contributionId,
+      ...instanceConfig,
+    });
   }
 
   return next;

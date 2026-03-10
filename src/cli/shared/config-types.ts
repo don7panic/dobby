@@ -3,19 +3,37 @@ export interface RawExtensionPackageConfig {
   enabled?: boolean;
 }
 
-export interface RawExtensionInstanceConfig {
-  contributionId: string;
-  config?: Record<string, unknown>;
+export interface RawExtensionItemConfig {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface RawRouteDefaults {
+  provider?: string;
+  sandbox?: string;
+  tools?: "full" | "readonly";
+  mentions?: "required" | "optional";
+  [key: string]: unknown;
 }
 
 export interface RawRouteProfile {
   projectRoot: string;
   tools?: "full" | "readonly";
   systemPromptFile?: string;
-  allowMentionsOnly?: boolean;
-  maxConcurrentTurns?: number;
-  providerId?: string;
-  sandboxId?: string;
+  mentions?: "required" | "optional";
+  provider?: string;
+  sandbox?: string;
+  [key: string]: unknown;
+}
+
+export interface RawBindingConfig {
+  connector: string;
+  source: {
+    type: "channel" | "chat";
+    id: string;
+    [key: string]: unknown;
+  };
+  route: string;
   [key: string]: unknown;
 }
 
@@ -25,22 +43,26 @@ export interface RawGatewayConfig {
     [key: string]: unknown;
   };
   providers?: {
-    defaultProviderId?: string;
-    instances?: Record<string, RawExtensionInstanceConfig>;
+    default?: string;
+    items?: Record<string, RawExtensionItemConfig>;
     [key: string]: unknown;
   };
   connectors?: {
-    instances?: Record<string, RawExtensionInstanceConfig>;
+    items?: Record<string, RawExtensionItemConfig>;
     [key: string]: unknown;
   };
   sandboxes?: {
-    defaultSandboxId?: string;
-    instances?: Record<string, RawExtensionInstanceConfig>;
+    default?: string;
+    items?: Record<string, RawExtensionItemConfig>;
     [key: string]: unknown;
   };
-  routing?: {
-    defaultRouteId?: string;
-    routes?: Record<string, RawRouteProfile>;
+  routes?: {
+    defaults?: RawRouteDefaults;
+    items?: Record<string, RawRouteProfile>;
+    [key: string]: unknown;
+  };
+  bindings?: {
+    items?: Record<string, RawBindingConfig>;
     [key: string]: unknown;
   };
   data?: {
@@ -57,22 +79,26 @@ export interface NormalizedGatewayConfig extends RawGatewayConfig {
     [key: string]: unknown;
   };
   providers: {
-    defaultProviderId: string;
-    instances: Record<string, RawExtensionInstanceConfig>;
+    default: string;
+    items: Record<string, RawExtensionItemConfig>;
     [key: string]: unknown;
   };
   connectors: {
-    instances: Record<string, RawExtensionInstanceConfig>;
+    items: Record<string, RawExtensionItemConfig>;
     [key: string]: unknown;
   };
   sandboxes: {
-    defaultSandboxId: string;
-    instances: Record<string, RawExtensionInstanceConfig>;
+    default: string;
+    items: Record<string, RawExtensionItemConfig>;
     [key: string]: unknown;
   };
-  routing: {
-    defaultRouteId?: string;
-    routes: Record<string, RawRouteProfile>;
+  routes: {
+    defaults: RawRouteDefaults;
+    items: Record<string, RawRouteProfile>;
+    [key: string]: unknown;
+  };
+  bindings: {
+    items: Record<string, RawBindingConfig>;
     [key: string]: unknown;
   };
   data: {
@@ -84,7 +110,7 @@ export interface NormalizedGatewayConfig extends RawGatewayConfig {
 
 export interface ContributionInstanceTemplate {
   id: string;
-  contributionId: string;
+  type: string;
   config: Record<string, unknown>;
 }
 

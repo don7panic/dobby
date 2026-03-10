@@ -3,6 +3,8 @@ import type { Logger } from "pino";
 
 export type Platform = string;
 export type ToolProfile = "full" | "readonly";
+export type MentionPolicy = "required" | "optional";
+export type BindingSourceType = "channel" | "chat";
 
 export interface InboundAttachment {
   id: string;
@@ -13,13 +15,17 @@ export interface InboundAttachment {
   remoteUrl?: string;
 }
 
+export interface BindingSource {
+  type: BindingSourceType;
+  id: string;
+}
+
 export interface InboundEnvelope {
   connectorId: string;
   platform: Platform;
   accountId: string;
   guildId?: string;
-  routeId: string;
-  routeChannelId: string;
+  source: BindingSource;
   chatId: string;
   threadId?: string;
   messageId: string;
@@ -31,7 +37,6 @@ export interface InboundEnvelope {
   raw: unknown;
   isDirectMessage: boolean;
   mentionedBot: boolean;
-  source?: "connector" | "scheduled";
 }
 
 export interface OutboundAttachment {
@@ -79,6 +84,7 @@ export type ConnectorUpdateStrategy = "edit" | "final_only" | "append";
 
 export interface ConnectorCapabilities {
   updateStrategy: ConnectorUpdateStrategy;
+  supportedSources: BindingSourceType[];
   supportsThread: boolean;
   supportsTyping: boolean;
   supportsFileUpload: boolean;
@@ -99,11 +105,10 @@ export interface ConnectorPlugin {
 export interface RouteProfile {
   projectRoot: string;
   tools: ToolProfile;
+  mentions: MentionPolicy;
+  provider: string;
+  sandbox: string;
   systemPromptFile?: string;
-  allowMentionsOnly: boolean;
-  maxConcurrentTurns: number;
-  providerId?: string;
-  sandboxId?: string;
 }
 
 export interface RouteResolution {

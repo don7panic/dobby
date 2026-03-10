@@ -14,8 +14,8 @@ import {
 import { ExtensionStoreManager } from "../../extension/manager.js";
 import {
   ensureGatewayConfigShape,
-  setDefaultRoute,
   upsertAllowListPackage,
+  upsertBinding,
   upsertConnectorInstance,
   upsertProviderInstance,
   upsertRoute,
@@ -329,15 +329,22 @@ export async function runInitCommand(): Promise<void> {
 
   next.providers = {
     ...next.providers,
-    defaultProviderId: selected.providerInstanceId,
-    instances: next.providers.instances,
+    default: selected.providerInstanceId,
+    items: next.providers.items,
+  };
+  next.routes = {
+    ...next.routes,
+    defaults: {
+      ...next.routes.defaults,
+      provider: selected.providerInstanceId,
+    },
   };
 
   upsertRoute(next, input.routeId, {
     ...selected.routeProfile,
     projectRoot: input.projectRoot,
   });
-  setDefaultRoute(next, input.routeId);
+  upsertBinding(next, selected.bindingId, selected.bindingConfig);
 
   const validatedConfig = await applyAndValidateContributionSchemas(configPath, next);
 
@@ -347,8 +354,9 @@ export async function runInitCommand(): Promise<void> {
       continue;
     }
 
-    const resolvedProvider = validatedConfig.providers?.instances?.[provider.instanceId];
-    const ensured = await ensureProviderPiModelsFile(configPath, resolvedProvider?.config ?? provider.config);
+    const resolvedProvider = validatedConfig.providers?.items?.[provider.instanceId];
+    const { type: _type, ...providerConfig } = resolvedProvider ?? {};
+    const ensured = await ensureProviderPiModelsFile(configPath, Object.keys(providerConfig).length > 0 ? providerConfig : provider.config);
     if (ensured.created) {
       createdModelsFiles.push(ensured.path);
     }

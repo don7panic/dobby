@@ -19,7 +19,6 @@ export interface FeishuConnectorConfig {
   messageFormat?: "text" | "card_markdown";
   replyMode?: "direct" | "reply";
   cardTitle?: string;
-  chatRouteMap: Record<string, string>;
   downloadAttachments?: boolean;
 }
 
@@ -84,6 +83,7 @@ export class FeishuConnector implements ConnectorPlugin {
     this.id = id;
     this.capabilities = {
       updateStrategy: this.messageFormat === "card_markdown" ? "final_only" : "edit",
+      supportedSources: ["chat"],
       supportsThread: this.replyMode === "reply",
       supportsTyping: false,
       supportsFileUpload: false,
@@ -114,22 +114,9 @@ export class FeishuConnector implements ConnectorPlugin {
           return;
         }
 
-        const routeId = this.config.chatRouteMap[event.message.chat_id];
-        if (!routeId) {
-          this.logger.debug(
-            {
-              connectorId: this.id,
-              chatId: event.message.chat_id,
-            },
-            "Ignoring Feishu message from unmapped chat",
-          );
-          return;
-        }
-
         this.logger.info(
           {
             connectorId: this.id,
-            routeId,
             chatId: event.message.chat_id,
             messageId: event.message.message_id,
             chatType: event.message.chat_type,
@@ -142,7 +129,6 @@ export class FeishuConnector implements ConnectorPlugin {
         const inbound = await mapFeishuMessageEvent({
           event,
           connectorId: this.id,
-          routeId,
           attachmentsRoot: this.attachmentsRoot,
           client: this.client,
           logger: this.logger,
@@ -157,7 +143,6 @@ export class FeishuConnector implements ConnectorPlugin {
         this.logger.info(
           {
             connectorId: this.id,
-            routeId,
             chatId: inbound.chatId,
             messageId: inbound.messageId,
             isDirectMessage: inbound.isDirectMessage,
@@ -179,7 +164,6 @@ export class FeishuConnector implements ConnectorPlugin {
     this.logger.info(
       {
         connectorId: this.id,
-        mappedChats: Object.keys(this.config.chatRouteMap).length,
         domain: this.config.domain ?? "feishu",
         messageFormat: this.messageFormat,
         replyMode: this.replyMode,

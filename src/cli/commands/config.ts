@@ -22,7 +22,7 @@ import {
   listContributionSchemas,
 } from "../shared/config-schema.js";
 
-export const CONFIG_SECTION_VALUES = ["providers", "connectors", "routing", "sandboxes", "data", "extensions"] as const;
+export const CONFIG_SECTION_VALUES = ["providers", "connectors", "routes", "bindings", "sandboxes", "data", "extensions"] as const;
 
 export type ConfigSection = (typeof CONFIG_SECTION_VALUES)[number];
 
@@ -33,7 +33,7 @@ interface ConfigListEntry {
   preview: string;
 }
 
-const EDITABLE_CONFIG_SECTIONS: ConfigureSection[] = ["provider", "connector", "routing"];
+const EDITABLE_CONFIG_SECTIONS: ConfigureSection[] = ["provider", "connector", "route", "binding"];
 
 /**
  * Validates section identifiers accepted by `config show|list`.
@@ -271,7 +271,7 @@ async function resolveEditSections(sections: string[]): Promise<ConfigureSection
   const picked = await multiselect({
     message: "Select sections to edit",
     options: EDITABLE_CONFIG_SECTIONS.map((section) => ({ value: section, label: section })),
-    initialValues: ["provider", "connector", "routing"],
+    initialValues: ["provider", "connector", "route", "binding"],
     required: true,
   });
 
@@ -312,7 +312,7 @@ export async function runConfigEditCommand(options: {
   );
 
   for (const section of sections) {
-    await applyConfigureSection(next, section, { schemaByContributionId, schemaStateByContributionId });
+    await applyConfigureSection(section, next, { schemaByContributionId, schemaStateByContributionId });
     await note(`Section '${section}' prepared`, "Updated");
   }
 

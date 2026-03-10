@@ -1,63 +1,64 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { loadGatewayConfig } from "../../core/routing.js";
 
-/**
- * Writes a temporary config file and returns its absolute path.
- */
 async function writeTempConfig(payload: unknown): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "dobby-routing-"));
-  const path = join(dir, "gateway.json");
-  await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
-  return path;
+  const configPath = join(dir, "gateway.json");
+  await writeFile(configPath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
+  return configPath;
 }
 
-/**
- * Creates a minimal valid config payload for routing loader tests.
- */
 function validConfig(): Record<string, unknown> {
   return {
     extensions: { allowList: [] },
     providers: {
-      defaultProviderId: "pi.main",
-      instances: {
+      default: "pi.main",
+      items: {
         "pi.main": {
-          contributionId: "provider.pi",
-          config: {},
+          type: "provider.pi",
         },
       },
     },
     connectors: {
-      instances: {
+      items: {
         "discord.main": {
-          contributionId: "connector.discord",
-          config: {
-            botName: "dobby-main",
-            botToken: "token",
-            botChannelMap: {
-              "123": "main",
-            },
-          },
+          type: "connector.discord",
+          botName: "dobby-main",
+          botToken: "token",
         },
       },
     },
     sandboxes: {
-      defaultSandboxId: "host.builtin",
-      instances: {},
+      default: "host.builtin",
+      items: {},
     },
-    routing: {
-      defaultRouteId: "main",
-      routes: {
+    routes: {
+      defaults: {
+        provider: "pi.main",
+        sandbox: "host.builtin",
+        tools: "full",
+        mentions: "required",
+      },
+      items: {
         main: {
-          projectRoot: process.cwd(),
-          tools: "full",
-          allowMentionsOnly: true,
-          maxConcurrentTurns: 1,
-          providerId: "pi.main",
-          sandboxId: "host.builtin",
+          projectRoot: "./workspace/project-a",
+          systemPromptFile: "./prompts/main.md",
+        },
+      },
+    },
+    bindings: {
+      items: {
+        "discord.main.main": {
+          connector: "discord.main",
+          source: {
+            type: "channel",
+            id: "123",
+          },
+          route: "main",
         },
       },
     },
@@ -68,27 +69,131 @@ function validConfig(): Record<string, unknown> {
   };
 }
 
-test("loadGatewayConfig fails fast on legacy routing.channelMap", async () => {
+test("loadGatewayConfig applies route defaults and resolves relative paths", async () => {
   const payload = validConfig();
-  (payload.routing as Record<string, unknown>).channelMap = { "discord.main": { "123": "main" } };
+  const configPath = await writeTempConfig(payload);
+
+  try {
+    const loaded = await loadGatewayConfig(configPath);
+    const configDir = dirname(configPath);
+
+    assert.equal(loaded.providers.default, "pi.main");
+    assert.deepEqual(loaded.routes.defaults, {
+      provider: "pi.main",
+      sandbox: "host.builtin",
+      tools: "full",
+      mentions: "required",
+    });
+    assert.deepEqual(loaded.routes.items.main, {
+      projectRoot: join(configDir, "workspace/project-a"),
+      systemPromptFile: join(configDir, "prompts/main.md"),
+      provider: "pi.main",
+      sandbox: "host.builtin",
+      tools: "full",
+      mentions: "required",
+    });
+    assert.equal(loaded.data.rootDir, join(configDir, "data"));
+    assert.deepEqual(loaded.bindings.items["discord.main.main"], {
+      connector: "discord.main",
+      source: {
+        type: "channel",
+        id: "123",
+      },
+      route: "main",
+    });
+  } finally {
+    await rm(dirname(configPath), { recursive: true, force: true });
+  }
+});
+
+test("loadGatewayConfig fails fast on legacy top-level routing", async () => {
+  const payload = validConfig();
+  payload.routing = {
+    routes: {
+      main: {
+        projectRoot: process.cwd(),
+      },
+    },
+  };
 
   const configPath = await writeTempConfig(payload);
-  await assert.rejects(loadGatewayConfig(configPath), /routing\.channelMap/);
-  await rm(join(configPath, ".."), { recursive: true, force: true });
+  try {
+    await assert.rejects(loadGatewayConfig(configPath), /top-level field 'routing'/);
+  } finally {
+    await rm(dirname(configPath), { recursive: true, force: true });
+  }
 });
 
 test("loadGatewayConfig fails fast on legacy botTokenEnv", async () => {
   const payload = validConfig();
-  (payload.connectors as Record<string, unknown>).instances = {
-    "discord.main": {
-      contributionId: "connector.discord",
-      config: {
+  payload.connectors = {
+    items: {
+      "discord.main": {
+        type: "connector.discord",
+        botName: "dobby-main",
         botTokenEnv: "DISCORD_BOT_TOKEN",
       },
     },
   };
 
   const configPath = await writeTempConfig(payload);
-  await assert.rejects(loadGatewayConfig(configPath), /botTokenEnv/);
-  await rm(join(configPath, ".."), { recursive: true, force: true });
+  try {
+    await assert.rejects(loadGatewayConfig(configPath), /botTokenEnv/);
+  } finally {
+    await rm(dirname(configPath), { recursive: true, force: true });
+  }
+});
+
+test("loadGatewayConfig fails fast on legacy connector route maps", async () => {
+  const payload = validConfig();
+  payload.connectors = {
+    items: {
+      "discord.main": {
+        type: "connector.discord",
+        botName: "dobby-main",
+        botToken: "token",
+        botChannelMap: {
+          "123": "main",
+        },
+      },
+    },
+  };
+
+  const configPath = await writeTempConfig(payload);
+  try {
+    await assert.rejects(loadGatewayConfig(configPath), /botChannelMap/);
+  } finally {
+    await rm(dirname(configPath), { recursive: true, force: true });
+  }
+});
+
+test("loadGatewayConfig fails fast on duplicate binding sources", async () => {
+  const payload = validConfig();
+  payload.bindings = {
+    items: {
+      "discord.main.main": {
+        connector: "discord.main",
+        source: {
+          type: "channel",
+          id: "123",
+        },
+        route: "main",
+      },
+      "discord.main.duplicate": {
+        connector: "discord.main",
+        source: {
+          type: "channel",
+          id: "123",
+        },
+        route: "main",
+      },
+    },
+  };
+
+  const configPath = await writeTempConfig(payload);
+  try {
+    await assert.rejects(loadGatewayConfig(configPath), /duplicates source 'discord\.main:channel:123'/);
+  } finally {
+    await rm(dirname(configPath), { recursive: true, force: true });
+  }
 });

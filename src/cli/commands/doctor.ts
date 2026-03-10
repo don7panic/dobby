@@ -4,14 +4,10 @@ import { homedir } from "node:os";
 import { loadGatewayConfig } from "../../core/routing.js";
 import { ExtensionStoreManager } from "../../extension/manager.js";
 import {
-  clearInvalidDefaultRoute,
   ensureGatewayConfigShape,
   setDefaultProviderIfMissingOrInvalid,
 } from "../shared/config-mutators.js";
-import {
-  DISCORD_CONNECTOR_CONTRIBUTION_ID,
-  normalizeDiscordBotChannelMap,
-} from "../shared/discord-config.js";
+import { DISCORD_CONNECTOR_CONTRIBUTION_ID } from "../shared/discord-config.js";
 import { readRawConfig, resolveConfigPath, resolveDataRootDir, writeConfigWithValidation } from "../shared/config-io.js";
 import { createLogger } from "../shared/runtime.js";
 
@@ -20,9 +16,6 @@ interface DoctorIssue {
   message: string;
 }
 
-/**
- * Expands "~" prefixed paths for route projectRoot checks.
- */
 function expandHome(value: string): string {
   if (value === "~") {
     return homedir();
@@ -35,9 +28,6 @@ function expandHome(value: string): string {
   return value;
 }
 
-/**
- * Resolves route projectRoot against config location when given as relative path.
- */
 function resolveRouteProjectRoot(configPath: string, projectRoot: string): string {
   const expanded = expandHome(projectRoot);
   if (isAbsolute(expanded)) {
@@ -47,9 +37,6 @@ function resolveRouteProjectRoot(configPath: string, projectRoot: string): strin
   return resolve(dirname(resolve(configPath)), expanded);
 }
 
-/**
- * Runs preflight diagnostics and optional conservative fixes for config/runtime consistency.
- */
 export async function runDoctorCommand(options: {
   fix?: boolean;
 }): Promise<void> {
@@ -76,7 +63,9 @@ export async function runDoctorCommand(options: {
   const installedExtensions = await manager.listInstalled();
 
   const installedPackages = new Set(installedExtensions.map((item) => item.packageName));
-  const enabledPackages = new Set((normalized.extensions?.allowList ?? []).filter((item) => item.enabled).map((item) => item.package));
+  const enabledPackages = new Set(
+    normalized.extensions.allowList.filter((item) => item.enabled).map((item) => item.package),
+  );
 
   for (const packageName of enabledPackages) {
     if (!installedPackages.has(packageName)) {
@@ -106,96 +95,87 @@ export async function runDoctorCommand(options: {
     }
   }
 
-  const providers = normalized.providers?.instances ?? {};
-  const connectors = normalized.connectors?.instances ?? {};
-  const sandboxes = normalized.sandboxes?.instances ?? {};
-
-  for (const [instanceId, instance] of Object.entries(providers)) {
-    if (!availableContributionIds.has(instance.contributionId)) {
+  for (const [instanceId, instance] of Object.entries(normalized.providers.items)) {
+    if (!availableContributionIds.has(instance.type)) {
       issues.push({
         level: "error",
-        message: `providers.instances['${instanceId}'] references missing contribution '${instance.contributionId}'`,
+        message: `providers.items['${instanceId}'] references missing contribution '${instance.type}'`,
       });
     }
   }
 
-  for (const [instanceId, instance] of Object.entries(connectors)) {
-    if (!availableContributionIds.has(instance.contributionId)) {
+  for (const [instanceId, instance] of Object.entries(normalized.connectors.items)) {
+    if (!availableContributionIds.has(instance.type)) {
       issues.push({
         level: "error",
-        message: `connectors.instances['${instanceId}'] references missing contribution '${instance.contributionId}'`,
+        message: `connectors.items['${instanceId}'] references missing contribution '${instance.type}'`,
+      });
+    }
+
+    if (instance.type === DISCORD_CONNECTOR_CONTRIBUTION_ID) {
+      const botName = typeof instance.botName === "string" ? instance.botName.trim() : "";
+      const botToken = typeof instance.botToken === "string" ? instance.botToken.trim() : "";
+      if (botName.length === 0) {
+        issues.push({
+          level: "error",
+          message: `connectors.items['${instanceId}'].botName is required`,
+        });
+      }
+      if (botToken.length === 0) {
+        issues.push({
+          level: "error",
+          message: `connectors.items['${instanceId}'].botToken is required`,
+        });
+      }
+    }
+  }
+
+  for (const [instanceId, instance] of Object.entries(normalized.sandboxes.items)) {
+    if (!availableContributionIds.has(instance.type)) {
+      issues.push({
+        level: "error",
+        message: `sandboxes.items['${instanceId}'] references missing contribution '${instance.type}'`,
       });
     }
   }
 
-  for (const [instanceId, instance] of Object.entries(sandboxes)) {
-    if (!availableContributionIds.has(instance.contributionId)) {
-      issues.push({
-        level: "error",
-        message: `sandboxes.instances['${instanceId}'] references missing contribution '${instance.contributionId}'`,
-      });
-    }
-  }
-
-  const routes = normalized.routing?.routes ?? {};
-
-  if (normalized.routing?.defaultRouteId && !routes[normalized.routing.defaultRouteId]) {
-    issues.push({
-      level: "error",
-      message: `routing.defaultRouteId '${normalized.routing.defaultRouteId}' does not exist`,
-    });
-  }
-
-  for (const [routeId, route] of Object.entries(routes)) {
+  for (const [routeId, route] of Object.entries(normalized.routes.items)) {
     try {
       const projectRootPath = resolveRouteProjectRoot(configPath, route.projectRoot);
       await access(projectRootPath);
     } catch {
       issues.push({
         level: "warning",
-        message: `routing.routes['${routeId}'].projectRoot does not exist: ${route.projectRoot}`,
+        message: `routes.items['${routeId}'].projectRoot does not exist: ${route.projectRoot}`,
       });
     }
   }
 
-  for (const [instanceId, connector] of Object.entries(connectors)) {
-    if (connector.contributionId !== DISCORD_CONNECTOR_CONTRIBUTION_ID) {
-      continue;
-    }
-
-    const botName = typeof connector.config?.botName === "string" ? connector.config.botName.trim() : "";
-    if (botName.length === 0) {
+  const seenBindingSources = new Map<string, string>();
+  for (const [bindingId, binding] of Object.entries(normalized.bindings.items)) {
+    if (!normalized.connectors.items[binding.connector]) {
       issues.push({
         level: "error",
-        message: `connectors.instances['${instanceId}'].config.botName is required`,
+        message: `bindings.items['${bindingId}'].connector references unknown connector '${binding.connector}'`,
       });
     }
-
-    const botToken = typeof connector.config?.botToken === "string" ? connector.config.botToken.trim() : "";
-    if (botToken.length === 0) {
+    if (!normalized.routes.items[binding.route]) {
       issues.push({
         level: "error",
-        message: `connectors.instances['${instanceId}'].config.botToken is required`,
+        message: `bindings.items['${bindingId}'].route references unknown route '${binding.route}'`,
       });
     }
 
-    const botChannelMap = normalizeDiscordBotChannelMap(connector.config?.botChannelMap);
-    if (Object.keys(botChannelMap).length === 0) {
+    const bindingKey = `${binding.connector}:${binding.source.type}:${binding.source.id}`;
+    const existingBindingId = seenBindingSources.get(bindingKey);
+    if (existingBindingId) {
       issues.push({
-        level: "warning",
-        message: `connectors.instances['${instanceId}'].config.botChannelMap is empty`,
+        level: "error",
+        message:
+          `bindings.items['${bindingId}'] duplicates source '${bindingKey}' already used by bindings.items['${existingBindingId}']`,
       });
-    }
-
-    for (const [channelId, routeId] of Object.entries(botChannelMap)) {
-      if (!routes[routeId]) {
-        issues.push({
-          level: "error",
-          message:
-            `connectors.instances['${instanceId}'].config.botChannelMap['${channelId}'] ` +
-            `references unknown route '${routeId}'`,
-        });
-      }
+    } else {
+      seenBindingSources.set(bindingKey, bindingId);
     }
   }
 
@@ -211,14 +191,12 @@ export async function runDoctorCommand(options: {
     await mkdir(join(rootDir, "extensions"), { recursive: true });
 
     const installedSet = new Set(installedExtensions.map((item) => item.packageName));
-    const allowList = fixTarget.extensions?.allowList ?? [];
-    for (const item of allowList) {
+    for (const item of fixTarget.extensions.allowList) {
       if (item.enabled && !installedSet.has(item.package)) {
         item.enabled = false;
       }
     }
 
-    const droppedDefaultRoute = clearInvalidDefaultRoute(fixTarget);
     setDefaultProviderIfMissingOrInvalid(fixTarget);
 
     await writeConfigWithValidation(configPath, fixTarget, {
@@ -228,32 +206,25 @@ export async function runDoctorCommand(options: {
 
     console.log("Applied doctor --fix actions:");
     console.log("- ensured data directories exist");
-    if (droppedDefaultRoute) {
-      console.log("- cleared invalid routing.defaultRouteId");
-    }
-
-    if (!droppedDefaultRoute) {
-      console.log("- no default route cleanup needed");
-    }
+    console.log("- disabled allowList entries for packages not installed");
+    console.log("- repaired default provider when missing or invalid");
   }
 
   const errorCount = issues.filter((issue) => issue.level === "error").length;
   const warningCount = issues.filter((issue) => issue.level === "warning").length;
 
   if (issues.length === 0) {
-    console.log(`Doctor OK: no issues found (${configPath})`);
+    console.log(`Doctor found no issues (${configPath})`);
     return;
   }
 
-  console.log(`Doctor report for ${configPath}:`);
+  console.log(`Doctor results (${configPath}):`);
   for (const issue of issues) {
-    const prefix = issue.level === "error" ? "ERROR" : "WARN";
-    console.log(`[${prefix}] ${issue.message}`);
+    console.log(`- [${issue.level}] ${issue.message}`);
   }
-
   console.log(`Summary: ${errorCount} error(s), ${warningCount} warning(s)`);
 
   if (errorCount > 0) {
-    throw new Error("Doctor found blocking errors");
+    throw new Error(`Doctor found ${errorCount} error(s)`);
   }
 }

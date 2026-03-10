@@ -3,47 +3,39 @@ import type {
   ContributionInstanceTemplate,
   ContributionTemplatesByKind,
   NormalizedGatewayConfig,
-  RawExtensionInstanceConfig,
+  RawBindingConfig,
+  RawExtensionItemConfig,
   RawGatewayConfig,
+  RawRouteDefaults,
   RawRouteProfile,
 } from "./config-types.js";
 
 const DEFAULT_DEDUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/**
- * Narrow type guard for plain object-like values.
- */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-/**
- * Normalizes instance maps and drops malformed entries.
- */
-function asInstanceMap(value: unknown): Record<string, RawExtensionInstanceConfig> {
+function asItemMap(value: unknown): Record<string, RawExtensionItemConfig> {
   if (!isRecord(value)) {
     return {};
   }
 
-  const result: Record<string, RawExtensionInstanceConfig> = {};
+  const result: Record<string, RawExtensionItemConfig> = {};
   for (const [instanceId, raw] of Object.entries(value)) {
-    if (!isRecord(raw) || typeof raw.contributionId !== "string" || raw.contributionId.trim().length === 0) {
+    if (!isRecord(raw) || typeof raw.type !== "string" || raw.type.trim().length === 0) {
       continue;
     }
 
-    const rawConfig = isRecord(raw.config) ? raw.config : {};
     result[instanceId] = {
-      contributionId: raw.contributionId,
-      config: { ...rawConfig },
+      ...raw,
+      type: raw.type,
     };
   }
 
   return result;
 }
 
-/**
- * Normalizes extensions.allowList into package+enabled tuples.
- */
 function asAllowList(value: unknown): Array<{ package: string; enabled: boolean }> {
   if (!Array.isArray(value)) {
     return [];
@@ -64,9 +56,22 @@ function asAllowList(value: unknown): Array<{ package: string; enabled: boolean 
   return normalized;
 }
 
-/**
- * Normalizes routing.routes and enforces safe defaults for optional fields.
- */
+function asRouteDefaults(value: unknown): RawRouteDefaults {
+  if (!isRecord(value)) {
+    return {
+      tools: "full",
+      mentions: "required",
+    };
+  }
+
+  return {
+    ...(typeof value.provider === "string" && value.provider.trim().length > 0 ? { provider: value.provider } : {}),
+    ...(typeof value.sandbox === "string" && value.sandbox.trim().length > 0 ? { sandbox: value.sandbox } : {}),
+    tools: value.tools === "readonly" ? "readonly" : "full",
+    mentions: value.mentions === "optional" ? "optional" : "required",
+  };
+}
+
 function asRoutes(value: unknown): Record<string, RawRouteProfile> {
   if (!isRecord(value)) {
     return {};
@@ -81,14 +86,10 @@ function asRoutes(value: unknown): Record<string, RawRouteProfile> {
     normalized[routeId] = {
       ...route,
       projectRoot: route.projectRoot,
-      tools: route.tools === "readonly" ? "readonly" : "full",
-      allowMentionsOnly: route.allowMentionsOnly !== false,
-      maxConcurrentTurns:
-        typeof route.maxConcurrentTurns === "number" && Number.isInteger(route.maxConcurrentTurns) && route.maxConcurrentTurns > 0
-          ? route.maxConcurrentTurns
-          : 1,
-      ...(typeof route.providerId === "string" && route.providerId.trim().length > 0 ? { providerId: route.providerId } : {}),
-      ...(typeof route.sandboxId === "string" && route.sandboxId.trim().length > 0 ? { sandboxId: route.sandboxId } : {}),
+      ...(route.tools === "readonly" ? { tools: "readonly" as const } : {}),
+      ...(route.mentions === "optional" ? { mentions: "optional" as const } : {}),
+      ...(typeof route.provider === "string" && route.provider.trim().length > 0 ? { provider: route.provider } : {}),
+      ...(typeof route.sandbox === "string" && route.sandbox.trim().length > 0 ? { sandbox: route.sandbox } : {}),
       ...(typeof route.systemPromptFile === "string" ? { systemPromptFile: route.systemPromptFile } : {}),
     };
   }
@@ -96,11 +97,65 @@ function asRoutes(value: unknown): Record<string, RawRouteProfile> {
   return normalized;
 }
 
-/**
- * Normalizes partial/raw gateway config into a fully-shaped mutable object.
- */
+function asBindings(value: unknown): Record<string, RawBindingConfig> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const normalized: Record<string, RawBindingConfig> = {};
+  for (const [bindingId, binding] of Object.entries(value)) {
+    if (!isRecord(binding)) {
+      continue;
+    }
+
+    const rawSource = binding.source;
+    if (
+      typeof binding.connector !== "string"
+      || binding.connector.trim().length === 0
+      || typeof binding.route !== "string"
+      || binding.route.trim().length === 0
+      || !isRecord(rawSource)
+      || (rawSource.type !== "channel" && rawSource.type !== "chat")
+      || typeof rawSource.id !== "string"
+      || rawSource.id.trim().length === 0
+    ) {
+      continue;
+    }
+
+    normalized[bindingId] = {
+      ...binding,
+      connector: binding.connector,
+      route: binding.route,
+      source: {
+        ...rawSource,
+        type: rawSource.type,
+        id: rawSource.id,
+      },
+    };
+  }
+
+  return normalized;
+}
+
 export function ensureGatewayConfigShape(config: RawGatewayConfig): NormalizedGatewayConfig {
-  const normalized: NormalizedGatewayConfig = {
+  const normalizedProvidersDefault =
+    typeof config.providers?.default === "string" && config.providers.default.trim().length > 0
+      ? config.providers.default
+      : "";
+  const normalizedSandboxesDefault =
+    typeof config.sandboxes?.default === "string" && config.sandboxes.default.trim().length > 0
+      ? config.sandboxes.default
+      : "host.builtin";
+
+  const routeDefaults = asRouteDefaults(config.routes?.defaults);
+  if (!routeDefaults.provider && normalizedProvidersDefault) {
+    routeDefaults.provider = normalizedProvidersDefault;
+  }
+  if (!routeDefaults.sandbox && normalizedSandboxesDefault) {
+    routeDefaults.sandbox = normalizedSandboxesDefault;
+  }
+
+  return {
     ...config,
     extensions: {
       ...((isRecord(config.extensions) ? config.extensions : {}) as Record<string, unknown>),
@@ -108,30 +163,26 @@ export function ensureGatewayConfigShape(config: RawGatewayConfig): NormalizedGa
     },
     providers: {
       ...((isRecord(config.providers) ? config.providers : {}) as Record<string, unknown>),
-      defaultProviderId:
-        typeof config.providers?.defaultProviderId === "string" && config.providers.defaultProviderId.trim().length > 0
-          ? config.providers.defaultProviderId
-          : "",
-      instances: asInstanceMap(config.providers?.instances),
+      default: normalizedProvidersDefault,
+      items: asItemMap(config.providers?.items),
     },
     connectors: {
       ...((isRecord(config.connectors) ? config.connectors : {}) as Record<string, unknown>),
-      instances: asInstanceMap(config.connectors?.instances),
+      items: asItemMap(config.connectors?.items),
     },
     sandboxes: {
       ...((isRecord(config.sandboxes) ? config.sandboxes : {}) as Record<string, unknown>),
-      defaultSandboxId:
-        typeof config.sandboxes?.defaultSandboxId === "string" && config.sandboxes.defaultSandboxId.trim().length > 0
-          ? config.sandboxes.defaultSandboxId
-          : "host.builtin",
-      instances: asInstanceMap(config.sandboxes?.instances),
+      default: normalizedSandboxesDefault,
+      items: asItemMap(config.sandboxes?.items),
     },
-    routing: {
-      ...((isRecord(config.routing) ? config.routing : {}) as Record<string, unknown>),
-      ...(typeof config.routing?.defaultRouteId === "string" && config.routing.defaultRouteId.trim().length > 0
-        ? { defaultRouteId: config.routing.defaultRouteId }
-        : {}),
-      routes: asRoutes(config.routing?.routes),
+    routes: {
+      ...((isRecord(config.routes) ? config.routes : {}) as Record<string, unknown>),
+      defaults: routeDefaults,
+      items: asRoutes(config.routes?.items),
+    },
+    bindings: {
+      ...((isRecord(config.bindings) ? config.bindings : {}) as Record<string, unknown>),
+      items: asBindings(config.bindings?.items),
     },
     data: {
       ...((isRecord(config.data) ? config.data : {}) as Record<string, unknown>),
@@ -142,13 +193,8 @@ export function ensureGatewayConfigShape(config: RawGatewayConfig): NormalizedGa
           : DEFAULT_DEDUP_TTL_MS,
     },
   };
-
-  return normalized;
 }
 
-/**
- * Upserts allowList entry for one package and controls enabled flag explicitly.
- */
 export function upsertAllowListPackage(config: RawGatewayConfig, packageName: string, enabled = true): void {
   const next = ensureGatewayConfigShape(config);
   const allowList = next.extensions.allowList;
@@ -166,18 +212,12 @@ export function upsertAllowListPackage(config: RawGatewayConfig, packageName: st
   };
 }
 
-/**
- * Derives a default instance id from contribution id.
- */
 function buildTemplateInstanceId(contributionId: string): string {
   const segments = contributionId.split(".");
   const suffix = segments.length > 1 ? segments.slice(1).join("-") : contributionId;
   return `${suffix}.main`;
 }
 
-/**
- * Converts contribution manifests into provider/connector/sandbox instance templates.
- */
 export function buildContributionTemplates(contributions: ExtensionContributionManifest[]): ContributionTemplatesByKind {
   const templates: ContributionTemplatesByKind = {
     providers: [],
@@ -188,7 +228,7 @@ export function buildContributionTemplates(contributions: ExtensionContributionM
   for (const contribution of contributions) {
     const template: ContributionInstanceTemplate = {
       id: buildTemplateInstanceId(contribution.id),
-      contributionId: contribution.id,
+      type: contribution.id,
       config: {},
     };
 
@@ -208,130 +248,139 @@ export function buildContributionTemplates(contributions: ExtensionContributionM
   return templates;
 }
 
-/**
- * Adds template instances when contribution ids are not yet represented in current instances.
- */
 function upsertTemplateInstances(
-  instances: Record<string, RawExtensionInstanceConfig>,
+  items: Record<string, RawExtensionItemConfig>,
   templates: ContributionInstanceTemplate[],
 ): string[] {
-  const byContributionId = new Set(Object.values(instances).map((instance) => instance.contributionId));
+  const byType = new Set(Object.values(items).map((instance) => instance.type));
   const addedIds: string[] = [];
 
   for (const template of templates) {
-    if (byContributionId.has(template.contributionId)) {
+    if (byType.has(template.type)) {
       continue;
     }
 
     let candidateId = template.id;
     let suffix = 2;
-    while (instances[candidateId]) {
+    while (items[candidateId]) {
       candidateId = `${template.id}-${suffix}`;
       suffix += 1;
     }
 
-    instances[candidateId] = {
-      contributionId: template.contributionId,
-      config: structuredClone(template.config),
+    items[candidateId] = {
+      type: template.type,
+      ...structuredClone(template.config),
     };
-    byContributionId.add(template.contributionId);
+    byType.add(template.type);
     addedIds.push(candidateId);
   }
 
   return addedIds;
 }
 
-/**
- * Applies generated instance templates into config and returns newly created ids.
- */
 export function applyContributionTemplates(config: RawGatewayConfig, templates: ContributionTemplatesByKind): {
   providers: string[];
   connectors: string[];
   sandboxes: string[];
 } {
   const next = ensureGatewayConfigShape(config);
-  const providerInstances = next.providers.instances;
-  const connectorInstances = next.connectors.instances;
-  const sandboxInstances = next.sandboxes.instances;
+  const providerItems = next.providers.items;
+  const connectorItems = next.connectors.items;
+  const sandboxItems = next.sandboxes.items;
 
   const added = {
-    providers: upsertTemplateInstances(providerInstances, templates.providers),
-    connectors: upsertTemplateInstances(connectorInstances, templates.connectors),
-    sandboxes: upsertTemplateInstances(sandboxInstances, templates.sandboxes),
+    providers: upsertTemplateInstances(providerItems, templates.providers),
+    connectors: upsertTemplateInstances(connectorItems, templates.connectors),
+    sandboxes: upsertTemplateInstances(sandboxItems, templates.sandboxes),
   };
 
   config.providers = {
     ...next.providers,
-    instances: providerInstances,
+    items: providerItems,
   };
   config.connectors = {
     ...next.connectors,
-    instances: connectorInstances,
+    items: connectorItems,
   };
   config.sandboxes = {
     ...next.sandboxes,
-    instances: sandboxInstances,
+    items: sandboxItems,
   };
 
   return added;
 }
 
-/**
- * Upserts one provider instance by id.
- */
 export function upsertProviderInstance(
   config: RawGatewayConfig,
   instanceId: string,
-  contributionId: string,
+  type: string,
   instanceConfig: Record<string, unknown>,
 ): void {
   const next = ensureGatewayConfigShape(config);
-  const instances = next.providers.instances;
-  instances[instanceId] = {
-    contributionId,
-    config: structuredClone(instanceConfig),
+  next.providers.items[instanceId] = {
+    type,
+    ...structuredClone(instanceConfig),
   };
   config.providers = {
     ...next.providers,
-    instances,
+    items: next.providers.items,
   };
 }
 
-/**
- * Upserts one connector instance by id.
- */
 export function upsertConnectorInstance(
   config: RawGatewayConfig,
   instanceId: string,
-  contributionId: string,
+  type: string,
   instanceConfig: Record<string, unknown>,
 ): void {
   const next = ensureGatewayConfigShape(config);
-  const instances = next.connectors.instances;
-  instances[instanceId] = {
-    contributionId,
-    config: structuredClone(instanceConfig),
+  next.connectors.items[instanceId] = {
+    type,
+    ...structuredClone(instanceConfig),
   };
   config.connectors = {
     ...next.connectors,
-    instances,
+    items: next.connectors.items,
   };
 }
 
-/**
- * Repairs missing/invalid default provider by choosing first lexicographic candidate.
- */
+export function upsertSandboxInstance(
+  config: RawGatewayConfig,
+  instanceId: string,
+  type: string,
+  instanceConfig: Record<string, unknown>,
+): void {
+  const next = ensureGatewayConfigShape(config);
+  next.sandboxes.items[instanceId] = {
+    type,
+    ...structuredClone(instanceConfig),
+  };
+  config.sandboxes = {
+    ...next.sandboxes,
+    items: next.sandboxes.items,
+  };
+}
+
 export function setDefaultProviderIfMissingOrInvalid(config: RawGatewayConfig): void {
   const next = ensureGatewayConfigShape(config);
-  const instances = next.providers.instances;
-  const defaultProviderId = next.providers.defaultProviderId;
+  const items = next.providers.items;
+  const defaultProvider = next.providers.default;
 
-  if (defaultProviderId && instances[defaultProviderId]) {
+  if (defaultProvider && items[defaultProvider]) {
     config.providers = next.providers;
+    if (!next.routes.defaults.provider) {
+      config.routes = {
+        ...next.routes,
+        defaults: {
+          ...next.routes.defaults,
+          provider: defaultProvider,
+        },
+      };
+    }
     return;
   }
 
-  const candidates = Object.keys(instances).sort((a, b) => a.localeCompare(b));
+  const candidates = Object.keys(items).sort((a, b) => a.localeCompare(b));
   if (candidates.length === 0) {
     config.providers = next.providers;
     return;
@@ -339,69 +388,43 @@ export function setDefaultProviderIfMissingOrInvalid(config: RawGatewayConfig): 
 
   config.providers = {
     ...next.providers,
-    defaultProviderId: candidates[0]!,
-    instances,
+    default: candidates[0]!,
+    items,
+  };
+  config.routes = {
+    ...next.routes,
+    defaults: {
+      ...next.routes.defaults,
+      provider: candidates[0]!,
+    },
   };
 }
 
-/**
- * Upserts one route profile with conservative defaults for omitted fields.
- */
 export function upsertRoute(config: RawGatewayConfig, routeId: string, profile: RawRouteProfile): void {
   const next = ensureGatewayConfigShape(config);
-  const routes = next.routing.routes;
-
-  routes[routeId] = {
-    tools: "full",
-    allowMentionsOnly: true,
-    maxConcurrentTurns: 1,
-    ...profile,
+  next.routes.items[routeId] = {
     projectRoot: profile.projectRoot,
+    ...(profile.tools ? { tools: profile.tools } : {}),
+    ...(profile.mentions ? { mentions: profile.mentions } : {}),
+    ...(profile.provider ? { provider: profile.provider } : {}),
+    ...(profile.sandbox ? { sandbox: profile.sandbox } : {}),
+    ...(typeof profile.systemPromptFile === "string" ? { systemPromptFile: profile.systemPromptFile } : {}),
   };
-
-  config.routing = {
-    ...next.routing,
-    routes,
-    ...(next.routing.defaultRouteId ? { defaultRouteId: next.routing.defaultRouteId } : {}),
+  config.routes = {
+    ...next.routes,
+    items: next.routes.items,
   };
 }
 
-/**
- * Sets routing.defaultRouteId to a specific route id.
- */
-export function setDefaultRoute(config: RawGatewayConfig, routeId: string): void {
+export function upsertBinding(config: RawGatewayConfig, bindingId: string, binding: RawBindingConfig): void {
   const next = ensureGatewayConfigShape(config);
-  config.routing = {
-    ...next.routing,
-    defaultRouteId: routeId,
-    routes: next.routing.routes,
+  next.bindings.items[bindingId] = structuredClone(binding);
+  config.bindings = {
+    ...next.bindings,
+    items: next.bindings.items,
   };
 }
 
-/**
- * Clears routing.defaultRouteId when the referenced route does not exist.
- */
-export function clearInvalidDefaultRoute(config: RawGatewayConfig): boolean {
-  const next = ensureGatewayConfigShape(config);
-  const defaultRouteId = next.routing.defaultRouteId;
-  const routes = next.routing.routes;
-
-  if (!defaultRouteId || routes[defaultRouteId]) {
-    config.routing = next.routing;
-    return false;
-  }
-
-  const { defaultRouteId: _dropped, ...rest } = next.routing;
-  config.routing = {
-    ...rest,
-    routes,
-  };
-  return true;
-}
-
-/**
- * Lists contribution ids referenced by configured provider/connector/sandbox instances.
- */
 export function listContributionIds(config: RawGatewayConfig): {
   providers: string[];
   connectors: string[];
@@ -410,8 +433,8 @@ export function listContributionIds(config: RawGatewayConfig): {
   const next = ensureGatewayConfigShape(config);
 
   return {
-    providers: Object.values(next.providers?.instances ?? {}).map((instance) => instance.contributionId),
-    connectors: Object.values(next.connectors?.instances ?? {}).map((instance) => instance.contributionId),
-    sandboxes: Object.values(next.sandboxes?.instances ?? {}).map((instance) => instance.contributionId),
+    providers: Object.values(next.providers.items).map((instance) => instance.type),
+    connectors: Object.values(next.connectors.items).map((instance) => instance.type),
+    sandboxes: Object.values(next.sandboxes.items).map((instance) => instance.type),
   };
 }

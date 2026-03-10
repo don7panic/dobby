@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import { loadGatewayConfig } from "../../core/routing.js";
 import type { RawGatewayConfig } from "./config-types.js";
@@ -23,13 +23,6 @@ function expandHome(value: string): string {
   }
 
   return value;
-}
-
-/**
- * Preserves legacy behavior where config files under "./config" still resolve data relative to project root.
- */
-function dataBaseDir(configDir: string): string {
-  return basename(configDir) === "config" ? resolve(configDir, "..") : configDir;
 }
 
 type ConfigPathSource = "env" | "repo" | "default";
@@ -144,7 +137,7 @@ export function resolveDataRootDir(configPath: string, rawConfig: RawGatewayConf
     return resolve(expanded);
   }
 
-  return resolve(dataBaseDir(configDir), expanded);
+  return resolve(configDir, expanded);
 }
 
 /**

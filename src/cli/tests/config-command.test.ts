@@ -27,9 +27,9 @@ test("previewConfigValue returns stable compact previews", () => {
 test("buildConfigListEntries summarizes object values with type and child counts", () => {
   const entries = buildConfigListEntries({
     providers: {
-      defaultProviderId: "pi.main",
-      instances: {
-        "pi.main": { contributionId: "provider.pi", config: {} },
+      default: "pi.main",
+      items: {
+        "pi.main": { type: "provider.pi" },
       },
     },
     featureFlag: true,

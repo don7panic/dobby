@@ -1,27 +1,25 @@
 import { BUILTIN_HOST_SANDBOX_ID } from "../../core/types.js";
 import {
   ensureGatewayConfigShape,
-  setDefaultRoute,
+  upsertBinding,
   upsertRoute,
 } from "../shared/config-mutators.js";
-import {
-  DISCORD_CONNECTOR_CONTRIBUTION_ID,
-  normalizeDiscordBotChannelMap,
-} from "../shared/discord-config.js";
+import { DISCORD_CONNECTOR_CONTRIBUTION_ID } from "../shared/discord-config.js";
 import { requireRawConfig, resolveConfigPath, writeConfigWithValidation } from "../shared/config-io.js";
-import type { RawGatewayConfig } from "../shared/config-types.js";
+import type { RawBindingConfig, RawGatewayConfig } from "../shared/config-types.js";
 
 interface DiscordConnectorView {
   connectorId: string;
-  contributionId: string;
+  type: string;
   botName: string;
   hasToken: boolean;
-  botChannelMap: Record<string, string>;
 }
 
-interface ChannelMappingView {
+interface BindingView {
+  bindingId: string;
   connectorId: string;
-  channelId: string;
+  sourceType: "channel" | "chat";
+  sourceId: string;
   routeId: string;
   routeExists: boolean;
   projectRoot?: string;
@@ -29,140 +27,105 @@ interface ChannelMappingView {
 
 interface RouteView {
   routeId: string;
-  defaultRoute: boolean;
   projectRoot: string;
   tools: "full" | "readonly";
-  allowMentionsOnly: boolean;
-  providerId?: string;
-  sandboxId?: string;
-  mappedChannels: number;
+  mentions: "required" | "optional";
+  provider?: string;
+  sandbox?: string;
+  bindings: number;
 }
 
-/**
- * Lists configured connector instances and projects Discord-specific settings.
- */
 function listDiscordConnectors(rawConfig: unknown): DiscordConnectorView[] {
   const normalized = ensureGatewayConfigShape(rawConfig as RawGatewayConfig);
   const items: DiscordConnectorView[] = [];
 
-  for (const [connectorId, connector] of Object.entries(normalized.connectors.instances)) {
-    if (connector.contributionId !== DISCORD_CONNECTOR_CONTRIBUTION_ID) {
+  for (const [connectorId, connector] of Object.entries(normalized.connectors.items)) {
+    if (connector.type !== DISCORD_CONNECTOR_CONTRIBUTION_ID) {
       continue;
     }
 
-    const botName = typeof connector.config?.botName === "string" ? connector.config.botName : "";
-    const botToken = typeof connector.config?.botToken === "string" ? connector.config.botToken.trim() : "";
+    const botName = typeof connector.botName === "string" ? connector.botName : "";
+    const botToken = typeof connector.botToken === "string" ? connector.botToken.trim() : "";
     items.push({
       connectorId,
-      contributionId: connector.contributionId,
+      type: connector.type,
       botName,
       hasToken: botToken.length > 0,
-      botChannelMap: normalizeDiscordBotChannelMap(connector.config?.botChannelMap),
     });
   }
 
   return items.sort((a, b) => a.connectorId.localeCompare(b.connectorId));
 }
 
-/**
- * Looks up one Discord connector instance and returns mutable normalized config.
- */
 function getDiscordConnectorOrThrow(
   rawConfig: unknown,
   connectorId: string,
 ): {
   normalized: ReturnType<typeof ensureGatewayConfigShape>;
-  connector: {
-    contributionId: string;
-    config: Record<string, unknown>;
-  };
+  connector: Record<string, unknown> & { type: string };
 } {
   const normalized = ensureGatewayConfigShape(rawConfig as RawGatewayConfig);
-  const connector = normalized.connectors.instances[connectorId];
+  const connector = normalized.connectors.items[connectorId];
   if (!connector) {
     throw new Error(`Connector instance '${connectorId}' not found`);
   }
-  if (connector.contributionId !== DISCORD_CONNECTOR_CONTRIBUTION_ID) {
+  if (connector.type !== DISCORD_CONNECTOR_CONTRIBUTION_ID) {
     throw new Error(
-      `Connector '${connectorId}' uses contribution '${connector.contributionId}'. This command currently supports only '${DISCORD_CONNECTOR_CONTRIBUTION_ID}'.`,
+      `Connector '${connectorId}' uses contribution '${connector.type}'. This command currently supports only '${DISCORD_CONNECTOR_CONTRIBUTION_ID}'.`,
     );
   }
   return {
     normalized,
-    connector: {
-      contributionId: connector.contributionId,
-      config: connector.config ?? {},
-    },
+    connector,
   };
 }
 
-/**
- * Aggregates channel->route mappings across Discord connectors.
- */
-function listChannelMappings(rawConfig: unknown, connectorFilter?: string): ChannelMappingView[] {
+function listBindings(rawConfig: unknown, connectorFilter?: string): BindingView[] {
   const normalized = ensureGatewayConfigShape(rawConfig as RawGatewayConfig);
-  const routes = normalized.routing.routes;
-  const connectors = listDiscordConnectors(normalized)
-    .filter((item) => !connectorFilter || item.connectorId === connectorFilter);
+  const routes = normalized.routes.items;
 
-  const items: ChannelMappingView[] = [];
-  for (const connector of connectors) {
-    for (const [channelId, routeId] of Object.entries(connector.botChannelMap)) {
-      const route = routes[routeId];
-      items.push({
-        connectorId: connector.connectorId,
-        channelId,
-        routeId,
+  return Object.entries(normalized.bindings.items)
+    .filter(([, binding]) => !connectorFilter || binding.connector === connectorFilter)
+    .map(([bindingId, binding]) => {
+      const route = routes[binding.route];
+      return {
+        bindingId,
+        connectorId: binding.connector,
+        sourceType: binding.source.type,
+        sourceId: binding.source.id,
+        routeId: binding.route,
         routeExists: Boolean(route),
         ...(route ? { projectRoot: route.projectRoot } : {}),
-      });
-    }
-  }
-
-  return items.sort((a, b) => {
-    const connectorCompare = a.connectorId.localeCompare(b.connectorId);
-    if (connectorCompare !== 0) {
-      return connectorCompare;
-    }
-    return a.channelId.localeCompare(b.channelId);
-  });
+      };
+    })
+    .sort((a, b) => a.bindingId.localeCompare(b.bindingId));
 }
 
-/**
- * Counts mapped Discord channels for each route id.
- */
-function buildRouteChannelCounts(rawConfig: unknown): Map<string, number> {
+function buildRouteBindingCounts(rawConfig: unknown): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const mapping of listChannelMappings(rawConfig)) {
-    counts.set(mapping.routeId, (counts.get(mapping.routeId) ?? 0) + 1);
+  for (const binding of listBindings(rawConfig)) {
+    counts.set(binding.routeId, (counts.get(binding.routeId) ?? 0) + 1);
   }
   return counts;
 }
 
-/**
- * Lists routes with selected runtime-affecting properties.
- */
 function listRoutes(rawConfig: unknown): RouteView[] {
   const normalized = ensureGatewayConfigShape(rawConfig as RawGatewayConfig);
-  const counts = buildRouteChannelCounts(normalized);
+  const counts = buildRouteBindingCounts(normalized);
 
-  return Object.entries(normalized.routing.routes)
+  return Object.entries(normalized.routes.items)
     .map(([routeId, route]): RouteView => ({
       routeId,
-      defaultRoute: normalized.routing.defaultRouteId === routeId,
       projectRoot: route.projectRoot,
       tools: route.tools === "readonly" ? "readonly" : "full",
-      allowMentionsOnly: route.allowMentionsOnly !== false,
-      ...(route.providerId ? { providerId: route.providerId } : {}),
-      ...(route.sandboxId ? { sandboxId: route.sandboxId } : {}),
-      mappedChannels: counts.get(routeId) ?? 0,
+      mentions: route.mentions === "optional" ? "optional" : "required",
+      ...(route.provider ? { provider: route.provider } : {}),
+      ...(route.sandbox ? { sandbox: route.sandbox } : {}),
+      bindings: counts.get(routeId) ?? 0,
     }))
     .sort((a, b) => a.routeId.localeCompare(b.routeId));
 }
 
-/**
- * Writes updated normalized config with validation+backup.
- */
 async function saveConfig(configPath: string, normalized: ReturnType<typeof ensureGatewayConfigShape>): Promise<void> {
   await writeConfigWithValidation(configPath, normalized, {
     validate: true,
@@ -170,9 +133,6 @@ async function saveConfig(configPath: string, normalized: ReturnType<typeof ensu
   });
 }
 
-/**
- * Lists configured bot connectors in a human-friendly view.
- */
 export async function runBotListCommand(options: {
   json?: boolean;
 }): Promise<void> {
@@ -193,14 +153,11 @@ export async function runBotListCommand(options: {
   console.log(`Bots (${configPath}):`);
   for (const bot of bots) {
     console.log(
-      `- ${bot.connectorId}: botName='${bot.botName || "(empty)"}', token=${bot.hasToken ? "set" : "missing"}, mappedChannels=${Object.keys(bot.botChannelMap).length}`,
+      `- ${bot.connectorId}: botName='${bot.botName || "(empty)"}', token=${bot.hasToken ? "set" : "missing"}`,
     );
   }
 }
 
-/**
- * Updates botName and/or botToken for one Discord connector instance.
- */
 export async function runBotSetCommand(options: {
   connectorId: string;
   name?: string;
@@ -216,125 +173,111 @@ export async function runBotSetCommand(options: {
     throw new Error("At least one of --name or --token must be provided");
   }
 
-  const currentMap = normalizeDiscordBotChannelMap(connector.config.botChannelMap);
-  const currentName = typeof connector.config.botName === "string" ? connector.config.botName : "";
-  const currentToken = typeof connector.config.botToken === "string" ? connector.config.botToken : "";
-
-  normalized.connectors.instances[options.connectorId] = {
-    contributionId: connector.contributionId,
-    config: {
-      ...connector.config,
-      botName: nextName ?? currentName,
-      botToken: nextToken ?? currentToken,
-      botChannelMap: currentMap,
-    },
+  normalized.connectors.items[options.connectorId] = {
+    ...connector,
+    ...(nextName !== undefined ? { botName: nextName } : {}),
+    ...(nextToken !== undefined ? { botToken: nextToken } : {}),
   };
 
   await saveConfig(configPath, normalized);
   console.log(`Updated bot settings for connector '${options.connectorId}'`);
 }
 
-/**
- * Lists channel->route mappings for one connector or all Discord connectors.
- */
-export async function runChannelListCommand(options: {
+export async function runBindingListCommand(options: {
   connectorId?: string;
   json?: boolean;
 }): Promise<void> {
   const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
-  const mappings = listChannelMappings(rawConfig, options.connectorId);
+  const bindings = listBindings(rawConfig, options.connectorId);
 
   if (options.connectorId) {
-    const connectors = listDiscordConnectors(rawConfig);
-    const found = connectors.some((item) => item.connectorId === options.connectorId);
-    if (!found) {
-      throw new Error(`Discord connector '${options.connectorId}' not found`);
+    const normalized = ensureGatewayConfigShape(rawConfig);
+    if (!normalized.connectors.items[options.connectorId]) {
+      throw new Error(`Connector '${options.connectorId}' not found`);
     }
   }
 
   if (options.json) {
-    console.log(JSON.stringify({ configPath, mappings }, null, 2));
+    console.log(JSON.stringify({ configPath, bindings }, null, 2));
     return;
   }
 
-  if (mappings.length === 0) {
-    console.log("No channel mappings configured.");
+  if (bindings.length === 0) {
+    console.log("No bindings configured.");
     return;
   }
 
-  console.log(`Channel mappings (${configPath}):`);
-  for (const item of mappings) {
-    const routeSuffix = item.routeExists ? "" : " [missing route]";
-    const projectSuffix = item.projectRoot ? ` (${item.projectRoot})` : "";
-    console.log(`- ${item.connectorId}: ${item.channelId} -> ${item.routeId}${routeSuffix}${projectSuffix}`);
+  console.log(`Bindings (${configPath}):`);
+  for (const binding of bindings) {
+    const routeSuffix = binding.routeExists ? "" : " [missing route]";
+    const projectSuffix = binding.projectRoot ? ` (${binding.projectRoot})` : "";
+    console.log(
+      `- ${binding.bindingId}: ${binding.connectorId}/${binding.sourceType}:${binding.sourceId} -> ${binding.routeId}${routeSuffix}${projectSuffix}`,
+    );
   }
 }
 
-/**
- * Creates or updates one channel mapping on a Discord connector.
- */
-export async function runChannelSetCommand(options: {
+export async function runBindingSetCommand(options: {
+  bindingId: string;
   connectorId: string;
-  channelId: string;
   routeId: string;
+  sourceType: "channel" | "chat";
+  sourceId: string;
 }): Promise<void> {
   const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
-  const { normalized, connector } = getDiscordConnectorOrThrow(rawConfig, options.connectorId);
+  const normalized = ensureGatewayConfigShape(structuredClone(rawConfig));
 
-  if (!normalized.routing.routes[options.routeId]) {
+  if (!normalized.connectors.items[options.connectorId]) {
+    throw new Error(`Connector '${options.connectorId}' does not exist`);
+  }
+  if (!normalized.routes.items[options.routeId]) {
     throw new Error(`Route '${options.routeId}' does not exist`);
   }
 
-  const currentMap = normalizeDiscordBotChannelMap(connector.config.botChannelMap);
-  currentMap[options.channelId] = options.routeId;
+  const duplicate = Object.entries(normalized.bindings.items).find(([bindingId, binding]) =>
+    bindingId !== options.bindingId
+    && binding.connector === options.connectorId
+    && binding.source.type === options.sourceType
+    && binding.source.id === options.sourceId
+  );
+  if (duplicate) {
+    throw new Error(
+      `Binding source '${options.connectorId}/${options.sourceType}:${options.sourceId}' is already used by '${duplicate[0]}'`,
+    );
+  }
 
-  normalized.connectors.instances[options.connectorId] = {
-    contributionId: connector.contributionId,
-    config: {
-      ...connector.config,
-      botChannelMap: currentMap,
+  const binding: RawBindingConfig = {
+    connector: options.connectorId,
+    source: {
+      type: options.sourceType,
+      id: options.sourceId,
     },
+    route: options.routeId,
   };
+  upsertBinding(normalized, options.bindingId, binding);
 
   await saveConfig(configPath, normalized);
-  console.log(`Mapped channel '${options.channelId}' -> route '${options.routeId}' on connector '${options.connectorId}'`);
+  console.log(`Upserted binding '${options.bindingId}'`);
 }
 
-/**
- * Removes one channel mapping from a Discord connector.
- */
-export async function runChannelUnsetCommand(options: {
-  connectorId: string;
-  channelId: string;
+export async function runBindingRemoveCommand(options: {
+  bindingId: string;
 }): Promise<void> {
   const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
-  const { normalized, connector } = getDiscordConnectorOrThrow(rawConfig, options.connectorId);
+  const normalized = ensureGatewayConfigShape(structuredClone(rawConfig));
 
-  const currentMap = normalizeDiscordBotChannelMap(connector.config.botChannelMap);
-  if (!Object.prototype.hasOwnProperty.call(currentMap, options.channelId)) {
-    throw new Error(`Channel '${options.channelId}' is not mapped on connector '${options.connectorId}'`);
+  if (!normalized.bindings.items[options.bindingId]) {
+    throw new Error(`Binding '${options.bindingId}' not found`);
   }
 
-  delete currentMap[options.channelId];
-
-  normalized.connectors.instances[options.connectorId] = {
-    contributionId: connector.contributionId,
-    config: {
-      ...connector.config,
-      botChannelMap: currentMap,
-    },
-  };
-
+  delete normalized.bindings.items[options.bindingId];
   await saveConfig(configPath, normalized);
-  console.log(`Removed mapping for channel '${options.channelId}' on connector '${options.connectorId}'`);
+  console.log(`Removed binding '${options.bindingId}'`);
 }
 
-/**
- * Lists route profiles with project/provider/sandbox and channel usage counts.
- */
 export async function runRouteListCommand(options: {
   json?: boolean;
 }): Promise<void> {
@@ -354,135 +297,87 @@ export async function runRouteListCommand(options: {
 
   console.log(`Routes (${configPath}):`);
   for (const route of routes) {
-    const defaultMarker = route.defaultRoute ? " [default]" : "";
-    const providerInfo = route.providerId ? route.providerId : "(default provider)";
-    const sandboxInfo = route.sandboxId ? route.sandboxId : BUILTIN_HOST_SANDBOX_ID;
-    const mentionsInfo = route.allowMentionsOnly ? "mentions-only" : "all-messages";
+    const providerInfo = route.provider ? route.provider : "(route default)";
+    const sandboxInfo = route.sandbox ? route.sandbox : BUILTIN_HOST_SANDBOX_ID;
     console.log(
-      `- ${route.routeId}${defaultMarker}: ${route.projectRoot}, tools=${route.tools}, provider=${providerInfo}, sandbox=${sandboxInfo}, mode=${mentionsInfo}, channels=${route.mappedChannels}`,
+      `- ${route.routeId}: ${route.projectRoot}, tools=${route.tools}, mentions=${route.mentions}, provider=${providerInfo}, sandbox=${sandboxInfo}, bindings=${route.bindings}`,
     );
   }
 }
 
-/**
- * Creates or updates one route profile with explicit fields.
- */
 export async function runRouteSetCommand(options: {
   routeId: string;
   projectRoot?: string;
   tools?: string;
   providerId?: string;
   sandboxId?: string;
-  allowMentionsOnly?: boolean;
-  setAsDefault?: boolean;
+  mentions?: "required" | "optional";
 }): Promise<void> {
   const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
   const normalized = ensureGatewayConfigShape(structuredClone(rawConfig));
-  const existing = normalized.routing.routes[options.routeId];
+  const existing = normalized.routes.items[options.routeId];
 
   const projectRoot = options.projectRoot?.trim() || existing?.projectRoot;
   if (!projectRoot) {
     throw new Error("--project-root is required when creating a new route");
   }
 
-  const toolsRaw = options.tools ?? existing?.tools ?? "full";
-  if (toolsRaw !== "full" && toolsRaw !== "readonly") {
+  const toolsRaw = options.tools ?? existing?.tools;
+  if (toolsRaw !== undefined && toolsRaw !== "full" && toolsRaw !== "readonly") {
     throw new Error(`Invalid --tools '${toolsRaw}'. Allowed: full, readonly`);
   }
 
-  const providerId = options.providerId ?? existing?.providerId;
-  if (providerId && !normalized.providers.instances[providerId]) {
-    throw new Error(`Provider '${providerId}' does not exist`);
+  const provider = options.providerId ?? existing?.provider;
+  if (provider && !normalized.providers.items[provider]) {
+    throw new Error(`Provider '${provider}' does not exist`);
   }
 
-  const sandboxId = options.sandboxId ?? existing?.sandboxId ?? BUILTIN_HOST_SANDBOX_ID;
-  if (sandboxId !== BUILTIN_HOST_SANDBOX_ID && !normalized.sandboxes.instances[sandboxId]) {
-    throw new Error(`Sandbox '${sandboxId}' does not exist`);
+  const sandbox = options.sandboxId ?? existing?.sandbox;
+  if (sandbox && sandbox !== BUILTIN_HOST_SANDBOX_ID && !normalized.sandboxes.items[sandbox]) {
+    throw new Error(`Sandbox '${sandbox}' does not exist`);
   }
-
-  const allowMentionsOnly = options.allowMentionsOnly ?? (existing?.allowMentionsOnly !== false);
 
   upsertRoute(normalized, options.routeId, {
     projectRoot,
-    tools: toolsRaw,
-    allowMentionsOnly,
-    maxConcurrentTurns:
-      typeof existing?.maxConcurrentTurns === "number" && existing.maxConcurrentTurns > 0
-        ? existing.maxConcurrentTurns
-        : 1,
-    ...(providerId ? { providerId } : {}),
-    ...(sandboxId ? { sandboxId } : {}),
+    ...(toolsRaw ? { tools: toolsRaw } : {}),
+    ...((options.mentions ?? existing?.mentions) ? { mentions: (options.mentions ?? existing?.mentions)! } : {}),
+    ...(provider ? { provider } : {}),
+    ...(sandbox ? { sandbox } : {}),
     ...(typeof existing?.systemPromptFile === "string" ? { systemPromptFile: existing.systemPromptFile } : {}),
   });
-
-  if (options.setAsDefault) {
-    setDefaultRoute(normalized, options.routeId);
-  }
 
   await saveConfig(configPath, normalized);
   console.log(`Upserted route '${options.routeId}'`);
 }
 
-/**
- * Removes one route, optionally cascading Discord channel mappings.
- */
 export async function runRouteRemoveCommand(options: {
   routeId: string;
-  cascadeChannelMaps?: boolean;
+  cascadeBindings?: boolean;
 }): Promise<void> {
   const configPath = resolveConfigPath();
   const rawConfig = await requireRawConfig(configPath);
   const normalized = ensureGatewayConfigShape(structuredClone(rawConfig));
 
-  if (!normalized.routing.routes[options.routeId]) {
+  if (!normalized.routes.items[options.routeId]) {
     throw new Error(`Route '${options.routeId}' not found`);
   }
 
-  const mappingRefs = listChannelMappings(normalized).filter((item) => item.routeId === options.routeId);
-  if (mappingRefs.length > 0 && !options.cascadeChannelMaps) {
-    const refList = mappingRefs.map((item) => `${item.connectorId}:${item.channelId}`).join(", ");
+  const bindingRefs = listBindings(normalized).filter((binding) => binding.routeId === options.routeId);
+  if (bindingRefs.length > 0 && !options.cascadeBindings) {
+    const refList = bindingRefs.map((binding) => binding.bindingId).join(", ");
     throw new Error(
-      `Route '${options.routeId}' is referenced by channel mappings (${refList}). Re-run with --cascade-channel-maps to remove these mappings automatically.`,
+      `Route '${options.routeId}' is referenced by bindings (${refList}). Re-run with --cascade-bindings to remove these bindings automatically.`,
     );
   }
 
-  if (mappingRefs.length > 0 && options.cascadeChannelMaps) {
-    const refsByConnector = new Map<string, string[]>();
-    for (const item of mappingRefs) {
-      refsByConnector.set(item.connectorId, [...(refsByConnector.get(item.connectorId) ?? []), item.channelId]);
-    }
-
-    for (const [connectorId, channels] of refsByConnector.entries()) {
-      const connector = normalized.connectors.instances[connectorId];
-      if (!connector || connector.contributionId !== DISCORD_CONNECTOR_CONTRIBUTION_ID) {
-        continue;
-      }
-
-      const nextMap = normalizeDiscordBotChannelMap(connector.config?.botChannelMap);
-      for (const channelId of channels) {
-        delete nextMap[channelId];
-      }
-
-      normalized.connectors.instances[connectorId] = {
-        contributionId: connector.contributionId,
-        config: {
-          ...connector.config,
-          botChannelMap: nextMap,
-        },
-      };
+  if (bindingRefs.length > 0 && options.cascadeBindings) {
+    for (const binding of bindingRefs) {
+      delete normalized.bindings.items[binding.bindingId];
     }
   }
 
-  delete normalized.routing.routes[options.routeId];
-  if (normalized.routing.defaultRouteId === options.routeId) {
-    const { defaultRouteId: _removedDefaultRoute, ...rest } = normalized.routing;
-    normalized.routing = {
-      ...rest,
-      routes: normalized.routing.routes,
-    };
-  }
-
+  delete normalized.routes.items[options.routeId];
   await saveConfig(configPath, normalized);
   console.log(`Removed route '${options.routeId}'`);
 }

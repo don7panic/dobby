@@ -78,3 +78,36 @@ test("cron help shows core subcommands", () => {
   assert.match(help, /run \[options\] <jobId>/);
   assert.match(help, /remove \[options\] <jobId>/);
 });
+
+test("binding help shows list, set, and remove subcommands", () => {
+  const program = buildProgram();
+  const bindingCommand = program.commands.find((command) => command.name() === "binding");
+  assert.ok(bindingCommand);
+
+  const help = bindingCommand.helpInformation();
+  assert.match(help, /list \[options\]/);
+  assert.match(help, /set \[options\] <bindingId>/);
+  assert.match(help, /remove <bindingId>/);
+});
+
+test("route help reflects provider, sandbox, mentions, and cascade-bindings options", () => {
+  const program = buildProgram();
+  const routeCommand = program.commands.find((command) => command.name() === "route");
+  assert.ok(routeCommand);
+
+  const setCommand = routeCommand.commands.find((command) => command.name() === "set");
+  const removeCommand = routeCommand.commands.find((command) => command.name() === "remove");
+  assert.ok(setCommand);
+  assert.ok(removeCommand);
+
+  const setHelp = setCommand.helpInformation();
+  const removeHelp = removeCommand.helpInformation();
+  assert.match(setHelp, /--provider <id>/);
+  assert.match(setHelp, /--sandbox <id>/);
+  assert.match(setHelp, /--mentions <policy>/);
+  assert.equal(setHelp.includes("--provider-id"), false);
+  assert.equal(setHelp.includes("--sandbox-id"), false);
+  assert.equal(setHelp.includes("--mentions-only"), false);
+  assert.equal(setHelp.includes("--default"), false);
+  assert.match(removeHelp, /--cascade-bindings/);
+});

@@ -26,16 +26,15 @@ import {
 import { runInitCommand } from "./commands/init.js";
 import { runStartCommand } from "./commands/start.js";
 import {
+  runBindingListCommand,
+  runBindingRemoveCommand,
+  runBindingSetCommand,
   runBotListCommand,
   runBotSetCommand,
-  runChannelListCommand,
-  runChannelSetCommand,
-  runChannelUnsetCommand,
   runRouteListCommand,
   runRouteRemoveCommand,
   runRouteSetCommand,
 } from "./commands/topology.js";
-import { DEFAULT_DISCORD_CONNECTOR_INSTANCE_ID } from "./shared/discord-config.js";
 
 /**
  * Builds the top-level dobby CLI program and registers all subcommands.
@@ -69,7 +68,7 @@ export function buildProgram(): Command {
     .description("Interactive configuration wizard")
     .option(
       "--section <section>",
-      "Config section (repeatable): provider|connector|routing|sandbox|data",
+      "Config section (repeatable): provider|connector|route|binding|sandbox|data",
       (value: string, previous: string[]) => [...previous, value],
       [] as string[],
     )
@@ -105,43 +104,49 @@ export function buildProgram(): Command {
       });
     });
 
-  const channelCommand = program.command("channel").description("Manage Discord channel-route mappings");
+  const bindingCommand = program.command("binding").description("Manage connector source-route bindings");
 
-  channelCommand
+  bindingCommand
     .command("list")
-    .description("List channel mappings")
+    .description("List bindings")
     .option("--connector <id>", "Filter by connector instance ID")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
-      await runChannelListCommand({
+      await runBindingListCommand({
         ...(typeof opts.connector === "string" ? { connectorId: opts.connector as string } : {}),
         json: Boolean(opts.json),
       });
     });
 
-  channelCommand
+  bindingCommand
     .command("set")
-    .description("Create or update one channel mapping")
-    .argument("<channelId>", "Discord channel ID")
-    .argument("<routeId>", "Route ID")
-    .option("--connector <id>", "Connector instance ID", DEFAULT_DISCORD_CONNECTOR_INSTANCE_ID)
-    .action(async (channelId: string, routeId: string, opts) => {
-      await runChannelSetCommand({
+    .description("Create or update one binding")
+    .argument("<bindingId>", "Binding ID")
+    .requiredOption("--connector <id>", "Connector instance ID")
+    .requiredOption("--source-type <type>", "Source type: channel|chat")
+    .requiredOption("--source-id <id>", "Source ID")
+    .requiredOption("--route <id>", "Route ID")
+    .action(async (bindingId: string, opts) => {
+      if (opts.sourceType !== "channel" && opts.sourceType !== "chat") {
+        throw new Error("--source-type must be channel or chat");
+      }
+
+      await runBindingSetCommand({
+        bindingId,
         connectorId: opts.connector as string,
-        channelId,
-        routeId,
+        sourceType: opts.sourceType as "channel" | "chat",
+        sourceId: opts.sourceId as string,
+        routeId: opts.route as string,
       });
     });
 
-  channelCommand
-    .command("unset")
-    .description("Remove one channel mapping")
-    .argument("<channelId>", "Discord channel ID")
-    .option("--connector <id>", "Connector instance ID", DEFAULT_DISCORD_CONNECTOR_INSTANCE_ID)
-    .action(async (channelId: string, opts) => {
-      await runChannelUnsetCommand({
-        connectorId: opts.connector as string,
-        channelId,
+  bindingCommand
+    .command("remove")
+    .description("Remove one binding")
+    .argument("<bindingId>", "Binding ID")
+    .action(async (bindingId: string) => {
+      await runBindingRemoveCommand({
+        bindingId,
       });
     });
 
@@ -163,31 +168,25 @@ export function buildProgram(): Command {
     .argument("<routeId>", "Route ID")
     .option("--project-root <path>", "Route project root")
     .option("--tools <profile>", "Route tools profile: full|readonly")
-    .option("--provider-id <id>", "Provider instance ID")
-    .option("--sandbox-id <id>", "Sandbox instance ID")
-    .option("--mentions-only <boolean>", "Whether group chats require @mention: true|false")
-    .option("--default", "Set as routing.defaultRouteId", false)
+    .option("--provider <id>", "Provider instance ID")
+    .option("--sandbox <id>", "Sandbox instance ID")
+    .option("--mentions <policy>", "Mention policy: required|optional")
     .action(async (routeId: string, opts) => {
-      const mentionsOnly =
-        typeof opts.mentionsOnly === "string"
-          ? opts.mentionsOnly.trim().toLowerCase() === "true"
-          : undefined;
       if (
-        typeof opts.mentionsOnly === "string"
-        && opts.mentionsOnly.trim().toLowerCase() !== "true"
-        && opts.mentionsOnly.trim().toLowerCase() !== "false"
+        typeof opts.mentions === "string"
+        && opts.mentions !== "required"
+        && opts.mentions !== "optional"
       ) {
-        throw new Error("--mentions-only must be true or false");
+        throw new Error("--mentions must be required or optional");
       }
 
       await runRouteSetCommand({
         routeId,
         ...(typeof opts.projectRoot === "string" ? { projectRoot: opts.projectRoot as string } : {}),
         ...(typeof opts.tools === "string" ? { tools: opts.tools as string } : {}),
-        ...(typeof opts.providerId === "string" ? { providerId: opts.providerId as string } : {}),
-        ...(typeof opts.sandboxId === "string" ? { sandboxId: opts.sandboxId as string } : {}),
-        ...(mentionsOnly !== undefined ? { allowMentionsOnly: mentionsOnly } : {}),
-        setAsDefault: Boolean(opts.default),
+        ...(typeof opts.provider === "string" ? { providerId: opts.provider as string } : {}),
+        ...(typeof opts.sandbox === "string" ? { sandboxId: opts.sandbox as string } : {}),
+        ...(typeof opts.mentions === "string" ? { mentions: opts.mentions as "required" | "optional" } : {}),
       });
     });
 
@@ -195,11 +194,11 @@ export function buildProgram(): Command {
     .command("remove")
     .description("Remove one route")
     .argument("<routeId>", "Route ID")
-    .option("--cascade-channel-maps", "Remove channel mappings that reference this route", false)
+    .option("--cascade-bindings", "Remove bindings that reference this route", false)
     .action(async (routeId: string, opts) => {
       await runRouteRemoveCommand({
         routeId,
-        cascadeChannelMaps: Boolean(opts.cascadeChannelMaps),
+        cascadeBindings: Boolean(opts.cascadeBindings),
       });
     });
 
@@ -208,7 +207,7 @@ export function buildProgram(): Command {
   configCommand
     .command("show")
     .description("Show full config or one section")
-    .argument("[section]", "Section: providers|connectors|routing|sandboxes|data|extensions")
+    .argument("[section]", "Section: providers|connectors|routes|bindings|sandboxes|data|extensions")
     .option("--json", "Output JSON", false)
     .action(async (section: string | undefined, opts) => {
       await runConfigShowCommand({
@@ -220,7 +219,7 @@ export function buildProgram(): Command {
   configCommand
     .command("list")
     .description("List config keys with type and preview")
-    .argument("[section]", "Section: providers|connectors|routing|sandboxes|data|extensions")
+    .argument("[section]", "Section: providers|connectors|routes|bindings|sandboxes|data|extensions")
     .option("--json", "Output JSON", false)
     .action(async (section: string | undefined, opts) => {
       await runConfigListCommand({
@@ -234,7 +233,7 @@ export function buildProgram(): Command {
     .description("Interactive edit for high-frequency sections")
     .option(
       "--section <section>",
-      "Edit section (repeatable): provider|connector|routing",
+      "Edit section (repeatable): provider|connector|route|binding",
       (value: string, previous: string[]) => [...previous, value],
       [] as string[],
     )

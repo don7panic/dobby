@@ -20,11 +20,10 @@ test("upsertAllowListPackage is idempotent", () => {
 test("applyContributionTemplates allocates new instance IDs when needed", () => {
   const config = ensureGatewayConfigShape({
     providers: {
-      defaultProviderId: "pi.main",
-      instances: {
+      default: "pi.main",
+      items: {
         "pi.main": {
-          contributionId: "provider.pi",
-          config: {},
+          type: "provider.pi",
         },
       },
     },
@@ -32,29 +31,29 @@ test("applyContributionTemplates allocates new instance IDs when needed", () => 
 
   const added = applyContributionTemplates(config, {
     providers: [
-      { id: "pi.main", contributionId: "provider.another", config: {} },
-      { id: "pi.main", contributionId: "provider.third", config: {} },
+      { id: "pi.main", type: "provider.another", config: {} },
+      { id: "pi.main", type: "provider.third", config: {} },
     ],
     connectors: [],
     sandboxes: [],
   });
 
   assert.deepEqual(added.providers, ["pi.main-2", "pi.main-3"]);
-  assert.equal(config.providers?.instances?.["pi.main-2"]?.contributionId, "provider.another");
-  assert.equal(config.providers?.instances?.["pi.main-3"]?.contributionId, "provider.third");
+  assert.equal(config.providers.items["pi.main-2"]?.type, "provider.another");
+  assert.equal(config.providers.items["pi.main-3"]?.type, "provider.third");
 });
 
 test("setDefaultProviderIfMissingOrInvalid picks lexicographically first provider", () => {
   const config = ensureGatewayConfigShape({
     providers: {
-      defaultProviderId: "missing",
-      instances: {
-        "z.main": { contributionId: "provider.z", config: {} },
-        "a.main": { contributionId: "provider.a", config: {} },
+      default: "missing",
+      items: {
+        "z.main": { type: "provider.z" },
+        "a.main": { type: "provider.a" },
       },
     },
   });
 
   setDefaultProviderIfMissingOrInvalid(config);
-  assert.equal(config.providers?.defaultProviderId, "a.main");
+  assert.equal(config.providers.default, "a.main");
 });

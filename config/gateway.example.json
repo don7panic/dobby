@@ -20,94 +20,103 @@
     ]
   },
   "providers": {
-    "defaultProviderId": "pi.main",
-    "instances": {
+    "default": "pi.main",
+    "items": {
       "pi.main": {
-        "contributionId": "provider.pi",
-        "config": {
-          "provider": "custom-openai",
-          "model": "example-model",
-          "thinkingLevel": "off",
-          "modelsFile": "./models.custom.json"
-        }
+        "type": "provider.pi",
+        "provider": "custom-openai",
+        "model": "example-model",
+        "thinkingLevel": "off",
+        "modelsFile": "./models.custom.json"
       }
     }
   },
   "connectors": {
-    "instances": {
+    "items": {
       "discord.main": {
-        "contributionId": "connector.discord",
-        "config": {
-          "botName": "dobby-main",
-          "botToken": "REPLACE_WITH_DISCORD_BOT_TOKEN",
-          "botChannelMap": {
-            "YOUR_DISCORD_CHANNEL_ID_A": "projectA"
-          },
-          "reconnectStaleMs": 60000,
-          "reconnectCheckIntervalMs": 10000
-        }
+        "type": "connector.discord",
+        "botName": "dobby-main",
+        "botToken": "REPLACE_WITH_DISCORD_BOT_TOKEN",
+        "reconnectStaleMs": 60000,
+        "reconnectCheckIntervalMs": 10000
       }
     }
   },
   "sandboxes": {
-    "defaultSandboxId": "host.builtin",
-    "instances": {}
+    "default": "host.builtin",
+    "items": {}
   },
-  "routing": {
-    "defaultRouteId": "projectA",
-    "routes": {
+  "routes": {
+    "defaults": {
+      "provider": "pi.main",
+      "sandbox": "host.builtin",
+      "tools": "full",
+      "mentions": "required"
+    },
+    "items": {
       "projectA": {
-        "projectRoot": "/Users/you/workspace/project-a",
-        "tools": "full",
-        "systemPromptFile": "",
-        "allowMentionsOnly": true,
-        "maxConcurrentTurns": 1,
-        "providerId": "pi.main",
-        "sandboxId": "host.builtin"
+        "projectRoot": "/Users/you/workspace/project-a"
+      }
+    }
+  },
+  "bindings": {
+    "items": {
+      "discord.main.projectA": {
+        "connector": "discord.main",
+        "source": {
+          "type": "channel",
+          "id": "YOUR_DISCORD_CHANNEL_ID_A"
+        },
+        "route": "projectA"
       }
     }
   },
   "_examples": {
     "connectors": {
-      "instances": {
+      "items": {
         "feishu.main": {
-          "contributionId": "connector.feishu",
-          "config": {
-            "appId": "cli_xxx",
-            "appSecret": "REPLACE_WITH_FEISHU_APP_SECRET",
-            "domain": "feishu",
-            "botName": "dobby-feishu",
-            "messageFormat": "card_markdown",
-            "replyMode": "direct",
-            "cardTitle": "Dobby",
-            "chatRouteMap": {
-              "oc_xxx": "projectA"
-            },
-            "downloadAttachments": true
-          }
+          "type": "connector.feishu",
+          "appId": "cli_xxx",
+          "appSecret": "REPLACE_WITH_FEISHU_APP_SECRET",
+          "domain": "feishu",
+          "botName": "dobby-feishu",
+          "messageFormat": "card_markdown",
+          "replyMode": "direct",
+          "cardTitle": "Dobby",
+          "downloadAttachments": true
         }
       }
     },
     "providers": {
-      "instances": {
+      "items": {
         "claude-cli.main": {
-          "contributionId": "provider.claude-cli",
-          "config": {
-            "model": "claude-sonnet-4-5",
-            "maxTurns": 20,
-            "command": "claude",
-            "commandArgs": [],
-            "authMode": "auto",
-            "permissionMode": "bypassPermissions",
-            "streamVerbose": true
-          }
+          "type": "provider.claude-cli",
+          "model": "claude-sonnet-4-5",
+          "maxTurns": 20,
+          "command": "claude",
+          "commandArgs": [],
+          "authMode": "auto",
+          "permissionMode": "bypassPermissions",
+          "streamVerbose": true
         }
       }
     },
-    "routing": {
-      "routes": {
+    "routes": {
+      "items": {
         "projectA": {
-          "providerId": "claude-cli.main"
+          "provider": "claude-cli.main"
+        }
+      }
+    },
+    "bindings": {
+      "items": {
+        "feishu.main.projectA": {
+          "connector": "feishu.main",
+          "source": {
+            "type": "chat",
+            "id": "oc_xxx"
+          },
+          "route": "projectA"
         }
       }
     }

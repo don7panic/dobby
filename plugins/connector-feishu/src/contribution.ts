@@ -11,7 +11,6 @@ const feishuConnectorConfigSchema = z.object({
   messageFormat: z.enum(["text", "card_markdown"]).default("card_markdown"),
   replyMode: z.enum(["direct", "reply"]).default("direct"),
   cardTitle: z.string().min(1).optional(),
-  chatRouteMap: z.record(z.string(), z.string().min(1)),
   downloadAttachments: z.boolean().default(true),
 });
 

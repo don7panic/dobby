@@ -50,49 +50,55 @@ async function runDoctorWithHome(homeDir: string, configPath: string): Promise<{
   });
 }
 
-test("doctor reports invalid botChannelMap route references", async () => {
+test("doctor reports invalid binding route references", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "dobby-doctor-home-"));
 
   try {
     const configPath = await writeTempHomeConfig(homeDir, {
       extensions: { allowList: [] },
       providers: {
-        defaultProviderId: "pi.main",
-        instances: {
+        default: "pi.main",
+        items: {
           "pi.main": {
-            contributionId: "provider.pi",
-            config: {},
+            type: "provider.pi",
           },
         },
       },
       connectors: {
-        instances: {
+        items: {
           "discord.main": {
-            contributionId: "connector.discord",
-            config: {
-              botName: "dobby-main",
-              botToken: "token",
-              botChannelMap: {
-                "123": "missing-route",
-              },
-            },
+            type: "connector.discord",
+            botName: "dobby-main",
+            botToken: "token",
           },
         },
       },
       sandboxes: {
-        defaultSandboxId: "host.builtin",
-        instances: {},
+        default: "host.builtin",
+        items: {},
       },
-      routing: {
-        defaultRouteId: "main",
-        routes: {
+      routes: {
+        defaults: {
+          provider: "pi.main",
+          sandbox: "host.builtin",
+          tools: "full",
+          mentions: "required",
+        },
+        items: {
           main: {
             projectRoot: process.cwd(),
-            tools: "full",
-            allowMentionsOnly: true,
-            maxConcurrentTurns: 1,
-            providerId: "pi.main",
-            sandboxId: "host.builtin",
+          },
+        },
+      },
+      bindings: {
+        items: {
+          "discord.main.123": {
+            connector: "discord.main",
+            source: {
+              type: "channel",
+              id: "123",
+            },
+            route: "missing-route",
           },
         },
       },
@@ -105,7 +111,7 @@ test("doctor reports invalid botChannelMap route references", async () => {
     const result = await runDoctorWithHome(homeDir, configPath);
     assert.equal(result.code, 1);
     assert.equal(
-      result.output.includes("botChannelMap['123']") && result.output.includes("missing-route"),
+      result.output.includes("bindings.items['discord.main.123'].route") && result.output.includes("missing-route"),
       true,
     );
   } finally {

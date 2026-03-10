@@ -42,8 +42,7 @@ export async function mapDiscordMessage(
   message: Message,
   connectorId: string,
   botUserId: string,
-  routeId: string,
-  routeChannelId: string,
+  sourceId: string,
   attachmentsRoot: string,
   logger: GatewayLogger,
 ): Promise<InboundEnvelope | null> {
@@ -57,7 +56,7 @@ export async function mapDiscordMessage(
 
   const cleanedText = stripBotMention(message.content ?? "", botUserId);
 
-  const attachmentDir = join(attachmentsRoot, routeChannelId, message.id);
+  const attachmentDir = join(attachmentsRoot, sourceId, message.id);
   await mkdir(attachmentDir, { recursive: true });
 
   const attachments: InboundAttachment[] = [];
@@ -83,8 +82,10 @@ export async function mapDiscordMessage(
     connectorId,
     platform: "discord",
     accountId: botUserId,
-    routeId,
-    routeChannelId,
+    source: {
+      type: "channel",
+      id: sourceId,
+    },
     chatId,
     messageId: message.id,
     userId: message.author.id,

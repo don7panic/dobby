@@ -44,7 +44,6 @@ export interface FeishuMessageEvent {
 interface MapFeishuMessageOptions {
   event: FeishuMessageEvent;
   connectorId: string;
-  routeId: string;
   attachmentsRoot: string;
   client: Client;
   logger: GatewayLogger;
@@ -337,18 +336,18 @@ async function downloadAttachment(
 }
 
 export async function mapFeishuMessageEvent(options: MapFeishuMessageOptions): Promise<InboundEnvelope | null> {
-  const { event, connectorId, routeId, attachmentsRoot, client, logger, downloadAttachments, botOpenId, botName } = options;
+  const { event, connectorId, attachmentsRoot, client, logger, downloadAttachments, botOpenId, botName } = options;
   if (event.sender.sender_type !== "user") {
     return null;
   }
 
-  const routeChannelId = event.message.chat_id;
+  const sourceId = event.message.chat_id;
   const attachments: InboundAttachment[] = [];
   if (downloadAttachments) {
     const descriptor = attachmentDescriptor(event);
     if (descriptor) {
       try {
-        const attachmentDir = join(attachmentsRoot, routeChannelId, event.message.message_id);
+        const attachmentDir = join(attachmentsRoot, sourceId, event.message.message_id);
         attachments.push(await downloadAttachment(client, event, descriptor, attachmentDir));
       } catch (error) {
         logger.warn(
@@ -385,8 +384,10 @@ export async function mapFeishuMessageEvent(options: MapFeishuMessageOptions): P
     connectorId,
     platform: "feishu",
     accountId: event.app_id ?? connectorId,
-    routeId,
-    routeChannelId,
+    source: {
+      type: "chat",
+      id: sourceId,
+    },
     chatId: event.message.chat_id,
     messageId: event.message.message_id,
     userId: senderId,

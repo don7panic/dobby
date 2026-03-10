@@ -158,11 +158,11 @@ export class ExtensionRegistry {
   ): Promise<Map<string, ProviderInstance>> {
     const instances = new Map<string, ProviderInstance>();
 
-    for (const [instanceId, instanceConfig] of Object.entries(config.instances)) {
-      const contribution = this.providers.get(instanceConfig.contributionId);
+    for (const [instanceId, instanceConfig] of Object.entries(config.items)) {
+      const contribution = this.providers.get(instanceConfig.type);
       if (!contribution) {
         throw new Error(
-          `Provider instance '${instanceId}' references unknown contribution '${instanceConfig.contributionId}'`,
+          `Provider instance '${instanceId}' references unknown contribution '${instanceConfig.type}'`,
         );
       }
       const instance = await contribution.createInstance({
@@ -184,11 +184,11 @@ export class ExtensionRegistry {
   ): Promise<ConnectorPlugin[]> {
     const instances: ConnectorPlugin[] = [];
 
-    for (const [instanceId, instanceConfig] of Object.entries(config.instances)) {
-      const contribution = this.connectors.get(instanceConfig.contributionId);
+    for (const [instanceId, instanceConfig] of Object.entries(config.items)) {
+      const contribution = this.connectors.get(instanceConfig.type);
       if (!contribution) {
         throw new Error(
-          `Connector instance '${instanceId}' references unknown contribution '${instanceConfig.contributionId}'`,
+          `Connector instance '${instanceId}' references unknown contribution '${instanceConfig.type}'`,
         );
       }
       const connector = await contribution.createInstance({
@@ -209,11 +209,11 @@ export class ExtensionRegistry {
   ): Promise<Map<string, SandboxInstance>> {
     const instances = new Map<string, SandboxInstance>();
 
-    for (const [instanceId, instanceConfig] of Object.entries(config.instances)) {
-      const contribution = this.sandboxes.get(instanceConfig.contributionId);
+    for (const [instanceId, instanceConfig] of Object.entries(config.items)) {
+      const contribution = this.sandboxes.get(instanceConfig.type);
       if (!contribution) {
         throw new Error(
-          `Sandbox instance '${instanceId}' references unknown contribution '${instanceConfig.contributionId}'`,
+          `Sandbox instance '${instanceId}' references unknown contribution '${instanceConfig.type}'`,
         );
       }
       const sandbox = await contribution.createInstance({

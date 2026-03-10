@@ -35,7 +35,7 @@ async function resolveSections(sections: string[]): Promise<ConfigureSection[]> 
   const picked = await multiselect({
     message: "Select sections to configure",
     options: CONFIGURE_SECTION_VALUES.map((section) => ({ value: section, label: section })),
-    initialValues: ["provider", "connector", "routing"],
+    initialValues: ["provider", "connector", "route", "binding"],
     required: true,
   });
 
@@ -76,7 +76,7 @@ export async function runConfigureCommand(options: {
   );
 
   for (const section of sections) {
-    await applyConfigureSection(next, section, { schemaByContributionId, schemaStateByContributionId });
+    await applyConfigureSection(section, next, { schemaByContributionId, schemaStateByContributionId });
     await note(`Section '${section}' prepared`, "Updated");
   }
 

@@ -16,9 +16,6 @@ test("createInitSelectionConfig wires explicit Discord bot config for provider.p
   assert.deepEqual(selected.connectorConfig, {
     botName: "dobby-main",
     botToken: "token-abc",
-    botChannelMap: {
-      "123": "main",
-    },
     reconnectStaleMs: 60_000,
     reconnectCheckIntervalMs: 10_000,
   });
@@ -26,7 +23,17 @@ test("createInitSelectionConfig wires explicit Discord bot config for provider.p
   assert.equal(selected.providerInstances.length, 1);
   assert.equal(selected.providerInstanceId, "pi.main");
   assert.equal(selected.providerContributionId, "provider.pi");
-  assert.equal(selected.routeProfile.providerId, "pi.main");
+  assert.equal(selected.routeProfile.provider, "pi.main");
+  assert.equal(selected.routeProfile.mentions, "required");
+  assert.equal(selected.bindingId, "discord.main.main");
+  assert.deepEqual(selected.bindingConfig, {
+    connector: "discord.main",
+    source: {
+      type: "channel",
+      id: "123",
+    },
+    route: "main",
+  });
 });
 
 test("createInitSelectionConfig wires explicit Discord bot config for provider.claude-cli", () => {
@@ -43,9 +50,6 @@ test("createInitSelectionConfig wires explicit Discord bot config for provider.c
   assert.deepEqual(selected.connectorConfig, {
     botName: "ops-bot",
     botToken: "token-xyz",
-    botChannelMap: {
-      "999": "support",
-    },
     reconnectStaleMs: 60_000,
     reconnectCheckIntervalMs: 10_000,
   });
@@ -53,7 +57,16 @@ test("createInitSelectionConfig wires explicit Discord bot config for provider.c
   assert.equal(selected.providerInstances.length, 1);
   assert.equal(selected.providerInstanceId, "claude-cli.main");
   assert.equal(selected.providerContributionId, "provider.claude-cli");
-  assert.equal(selected.routeProfile.providerId, "claude-cli.main");
+  assert.equal(selected.routeProfile.provider, "claude-cli.main");
+  assert.equal(selected.routeProfile.mentions, "optional");
+  assert.deepEqual(selected.bindingConfig, {
+    connector: "discord.main",
+    source: {
+      type: "channel",
+      id: "999",
+    },
+    route: "support",
+  });
 });
 
 test("createInitSelectionConfig supports multiple providers and uses explicit route provider", () => {
@@ -78,6 +91,6 @@ test("createInitSelectionConfig supports multiple providers and uses explicit ro
     "@dobby.ai/connector-discord",
   ]);
   assert.equal(selected.providerInstanceId, "claude-cli.main");
-  assert.equal(selected.routeProfile.providerId, "claude-cli.main");
+  assert.equal(selected.routeProfile.provider, "claude-cli.main");
   assert.equal(selected.routeProviderChoiceId, "provider.claude-cli");
 });

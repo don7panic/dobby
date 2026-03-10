@@ -27,8 +27,9 @@ function createConversationRuntime(id: string, abortCalls: string[], closeCalls:
     route: {
       projectRoot: "/tmp/project",
       tools: "full",
-      allowMentionsOnly: true,
-      maxConcurrentTurns: 1,
+      mentions: "required",
+      provider: "provider.main",
+      sandbox: "host.builtin",
     },
     providerId: "provider.main",
     sandboxId: "host.builtin",

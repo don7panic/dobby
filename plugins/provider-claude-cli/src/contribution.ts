@@ -1612,7 +1612,7 @@ class ClaudeCliProviderInstanceImpl implements ProviderInstance {
   private getSessionMetaPath(inbound: ProviderRuntimeCreateOptions["inbound"]): string {
     const guildSegment = safeSegment(inbound.guildId ?? "dm");
     const connectorSegment = safeSegment(inbound.connectorId);
-    const channelSegment = safeSegment(inbound.routeChannelId);
+    const sourceSegment = safeSegment(inbound.source.id);
     const threadSegment = safeSegment(inbound.threadId ?? "root");
     const chatSegment = safeSegment(inbound.chatId);
 
@@ -1622,7 +1622,7 @@ class ClaudeCliProviderInstanceImpl implements ProviderInstance {
       inbound.platform,
       safeSegment(inbound.accountId),
       guildSegment,
-      channelSegment,
+      sourceSegment,
       threadSegment,
       `${chatSegment}.claude-cli-session.json`,
     );

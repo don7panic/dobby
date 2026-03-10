@@ -15,7 +15,8 @@ Discord-first 本地 Agent Gateway。宿主只负责 CLI、网关主流程、扩
 
 ## 核心能力
 
-- Discord 映射频道 / 线程 -> route -> provider / sandbox
+- connector source -> binding -> route -> provider / sandbox
+- Discord 频道 / 线程接入；线程消息继续按父频道命中 binding
 - Feishu 长连接消息接入（self-built app，手工安装/配置）
 - Feishu 出站支持普通文本和 Markdown 卡片；默认群内直发，不走 reply thread
 - conversation 级 runtime 复用与串行化
@@ -32,7 +33,7 @@ Discord-first 本地 Agent Gateway。宿主只负责 CLI、网关主流程、扩
 Discord / Cron
     -> Connector
     -> Gateway
-       -> Dedup / Control Commands / Route Resolver
+       -> Dedup / Control Commands / Binding Resolver / Route Resolver
        -> Runtime Registry
        -> Provider Runtime
        -> Sandbox Executor
@@ -162,20 +163,20 @@ dobby doctor [--fix]
 ```bash
 dobby config show [section] [--json]
 dobby config list [section] [--json]
-dobby config edit [--section provider|connector|routing]
+dobby config edit [--section provider|connector|route|binding]
 dobby config schema list [--json]
 dobby config schema show <contributionId> [--json]
 
 dobby bot list [--json]
 dobby bot set <connectorId> [--name <name>] [--token <token>]
 
-dobby channel list [--connector <id>] [--json]
-dobby channel set <channelId> <routeId> [--connector <id>]
-dobby channel unset <channelId> [--connector <id>]
+dobby binding list [--connector <id>] [--json]
+dobby binding set <bindingId> --connector <id> --source-type channel|chat --source-id <id> --route <id>
+dobby binding remove <bindingId>
 
 dobby route list [--json]
-dobby route set <routeId> [--project-root <path>] [--tools full|readonly] [--provider-id <id>] [--sandbox-id <id>] [--mentions-only true|false] [--default]
-dobby route remove <routeId> [--cascade-channel-maps]
+dobby route set <routeId> [--project-root <path>] [--tools full|readonly] [--provider <id>] [--sandbox <id>] [--mentions required|optional]
+dobby route remove <routeId> [--cascade-bindings]
 ```
 
 扩展管理：
@@ -208,25 +209,30 @@ dobby cron remove <jobId>
 - `providers`
 - `connectors`
 - `sandboxes`
-- `routing`
+- `routes`
+- `bindings`
 - `data`
 
 关键语义：
 
 - `extensions.allowList`
   - 只声明启用状态，不负责安装
-- `providers.instances[*].contributionId`
-  - 指向某个 provider contribution
-- `connectors.instances[*].config.botChannelMap`
-  - channelId -> routeId
-- `routing.routes[*]`
-  - 定义 `projectRoot`、`tools`、`systemPromptFile`、`allowMentionsOnly`、`providerId`、`sandboxId`
-- `sandboxes.defaultSandboxId`
+- `providers.default`
+  - 默认 provider instance ID
+- `providers.items[*].type` / `connectors.items[*].type` / `sandboxes.items[*].type`
+  - 指向某个 contribution，实例配置直接内联在对象里
+- `routes.defaults`
+  - 统一提供 route 默认的 `provider`、`sandbox`、`tools`、`mentions`
+- `routes.items[*]`
+  - route 是可复用的执行 profile，定义 `projectRoot`，并按需覆盖 `provider`、`sandbox`、`tools`、`mentions`、`systemPromptFile`
+- `bindings.items[*]`
+  - `(connector, source.type, source.id) -> route` 的入口绑定
+- `sandboxes.default`
   - 未指定时默认使用 `host.builtin`
+- 未匹配 binding 的入站消息会被直接忽略，不存在 default route fallback
 
 当前代码还保留但未真正生效的字段：
 
-- `routing.routes[*].maxConcurrentTurns`
 - cron job 的 `sessionPolicy`
 
 示例配置：
@@ -278,7 +284,7 @@ job 支持三种调度方式：
 npm run start -- cron add daily-report \
   --prompt "Summarize open issues in this repo" \
   --connector discord.main \
-  --route main \
+  --route projectA \
   --channel 1234567890 \
   --cron "0 9 * * 1-5" \
   --tz "Asia/Shanghai"
@@ -292,8 +298,8 @@ npm run start -- cron add daily-report \
 
 ## Discord 连接器的当前行为
 
-- 只处理已映射的 guild channel，DM 目前禁用
-- 线程消息使用父频道 ID 做 route 查找
+- 只处理已绑定的 guild channel，DM 目前禁用
+- 线程消息使用父频道 ID 做 binding 查找
 - 会自动下载附件到本地
 - 图片会作为 image input 传给 provider
 - 非图片附件会把路径注入 prompt

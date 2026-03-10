@@ -5,7 +5,6 @@ import { DiscordConnector, type DiscordConnectorConfig } from "./connector.js";
 const discordConnectorConfigSchema = z.object({
   botName: z.string().min(1),
   botToken: z.string().min(1),
-  botChannelMap: z.record(z.string(), z.string().min(1)),
   reconnectStaleMs: z.number().int().positive().default(60_000),
   reconnectCheckIntervalMs: z.number().int().positive().default(10_000),
 });

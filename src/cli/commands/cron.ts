@@ -80,10 +80,10 @@ function assertDeliveryReferences(
     routeId: string;
   },
 ): void {
-  if (!config.connectors.instances[input.connectorId]) {
+  if (!config.connectors.items[input.connectorId]) {
     throw new Error(`Unknown connectorId '${input.connectorId}'`);
   }
-  if (!config.routing.routes[input.routeId]) {
+  if (!config.routes.items[input.routeId]) {
     throw new Error(`Unknown routeId '${input.routeId}'`);
   }
 }

@@ -4,9 +4,10 @@ import { EventForwarder } from "../agent/event-forwarder.js";
 import type { Executor } from "../sandbox/executor.js";
 import { parseControlCommand, type ControlCommand } from "./control-command.js";
 import type { DedupStore } from "./dedup-store.js";
-import { RouteResolver } from "./routing.js";
+import { BindingResolver, RouteResolver } from "./routing.js";
 import { RuntimeRegistry } from "./runtime-registry.js";
 import type {
+  BindingResolution,
   ConnectorPlugin,
   GatewayAgentRuntime,
   GatewayConfig,
@@ -18,7 +19,6 @@ import type {
   ProviderInstance,
   RouteResolution,
 } from "./types.js";
-import { BUILTIN_HOST_SANDBOX_ID } from "./types.js";
 
 interface GatewayOptions {
   config: GatewayConfig;
@@ -26,17 +26,19 @@ interface GatewayOptions {
   providers: Map<string, ProviderInstance>;
   executors: Map<string, Executor>;
   routeResolver: RouteResolver;
+  bindingResolver: BindingResolver;
   dedupStore: DedupStore;
   runtimeRegistry: RuntimeRegistry;
   logger: GatewayLogger;
 }
 
 interface MessageHandlingOptions {
-  source: "connector" | "scheduled";
+  origin: "connector" | "scheduled";
   useDedup: boolean;
   stateless: boolean;
   includeReplyTo: boolean;
   conversationKeyOverride?: string;
+  routeIdOverride?: string;
   sessionPolicy?: "shared-session" | "ephemeral";
   timeoutMs?: number;
 }
@@ -48,6 +50,12 @@ interface StopControlEvent {
   accountId: string;
   chatId: string;
   threadId?: string;
+}
+
+interface ResolvedMessageRoute {
+  route: RouteResolution;
+  routeId: string;
+  binding?: BindingResolution;
 }
 
 const TYPING_INITIAL_DELAY_MS = 1_200;
@@ -132,8 +140,10 @@ export class Gateway {
       connectorId: request.connectorId,
       platform: connector.platform,
       accountId: request.connectorId,
-      routeId: request.routeId,
-      routeChannelId: request.channelId,
+      source: {
+        type: "chat",
+        id: request.channelId,
+      },
       chatId: request.channelId,
       ...(request.threadId ? { threadId: request.threadId } : {}),
       messageId: `cron:${request.runId}`,
@@ -149,15 +159,15 @@ export class Gateway {
       },
       isDirectMessage: false,
       mentionedBot: true,
-      source: "scheduled",
     };
 
     await this.handleMessage(syntheticInbound, {
-      source: "scheduled",
+      origin: "scheduled",
       useDedup: true,
       stateless: true,
       includeReplyTo: false,
       conversationKeyOverride: `cron:${request.runId}`,
+      routeIdOverride: request.routeId,
       sessionPolicy: "ephemeral",
       ...(request.timeoutMs !== undefined ? { timeoutMs: request.timeoutMs } : {}),
     });
@@ -251,19 +261,60 @@ export class Gateway {
       },
       stop: () => {
         stopped = true;
-        clearInterval(checkTimer);
+        clearTimeout(checkTimer);
       },
     };
   }
 
   private async handleInbound(message: InboundEnvelope): Promise<void> {
     await this.handleMessage(message, {
-      source: "connector",
+      origin: "connector",
       useDedup: true,
       stateless: false,
       includeReplyTo: true,
       sessionPolicy: "shared-session",
     });
+  }
+
+  private resolveMessageRoute(message: InboundEnvelope, handling: MessageHandlingOptions): ResolvedMessageRoute | null {
+    const overrideRouteId = handling.routeIdOverride?.trim();
+    if (overrideRouteId) {
+      const route = this.options.routeResolver.resolve(overrideRouteId);
+      if (!route) {
+        return null;
+      }
+
+      return {
+        routeId: overrideRouteId,
+        route,
+      };
+    }
+
+    const binding = this.options.bindingResolver.resolve(message.connectorId, message.source);
+    if (!binding) {
+      if (handling.origin === "connector") {
+        this.options.logger.debug(
+          {
+            connectorId: message.connectorId,
+            sourceType: message.source.type,
+            sourceId: message.source.id,
+          },
+          "Ignoring inbound message from unbound source",
+        );
+      }
+      return null;
+    }
+
+    const route = this.options.routeResolver.resolve(binding.config.route);
+    if (!route) {
+      return null;
+    }
+
+    return {
+      routeId: binding.config.route,
+      route,
+      binding,
+    };
   }
 
   private async handleMessage(message: InboundEnvelope, handling: MessageHandlingOptions): Promise<void> {
@@ -282,11 +333,24 @@ export class Gateway {
       this.options.dedupStore.add(key);
     }
 
-    if (handling.source === "connector") {
+    const resolvedRoute = this.resolveMessageRoute(message, handling);
+    if (!resolvedRoute) {
+      if (handling.routeIdOverride) {
+        await connector.send({
+          ...this.outboundBaseFromInbound(message),
+          mode: "create",
+          ...(handling.includeReplyTo ? { replyToMessageId: message.messageId } : {}),
+          text: `No route configured for route '${handling.routeIdOverride}'.`,
+        });
+      }
+      return;
+    }
+
+    if (handling.origin === "connector") {
       const command = parseControlCommand(message.text);
       if (command) {
         try {
-          await this.handleCommand(connector, message, command);
+          await this.handleCommand(connector, message, command, resolvedRoute.route);
         } catch (error) {
           this.options.logger.error({ err: error, messageId: message.messageId }, "Failed to handle control command");
           await this.sendCommandReply(
@@ -299,24 +363,21 @@ export class Gateway {
       }
     }
 
-    const route = this.options.routeResolver.resolve(message.routeId);
-    if (!route) {
-      await connector.send({
-        ...this.outboundBaseFromInbound(message),
-        mode: "create",
-        ...(handling.includeReplyTo ? { replyToMessageId: message.messageId } : {}),
-        text: `No route configured for route '${message.routeId}'.`,
-      });
+    const { route } = resolvedRoute;
+    if (route.profile.mentions === "required" && !message.isDirectMessage && !message.mentionedBot) {
+      this.options.logger.debug(
+        {
+          sourceType: message.source.type,
+          sourceId: message.source.id,
+          routeId: route.routeId,
+        },
+        "Ignoring non-mention message",
+      );
       return;
     }
 
-    if (route.profile.allowMentionsOnly && !message.isDirectMessage && !message.mentionedBot) {
-      this.options.logger.debug({ channelId: message.routeChannelId, routeId: route.routeId }, "Ignoring non-mention message");
-      return;
-    }
-
-    const providerId = route.profile.providerId ?? this.options.config.providers.defaultProviderId;
-    const sandboxId = route.profile.sandboxId ?? this.options.config.sandboxes.defaultSandboxId ?? BUILTIN_HOST_SANDBOX_ID;
+    const providerId = route.profile.provider;
+    const sandboxId = route.profile.sandbox;
     const provider = this.options.providers.get(providerId);
     const executor = this.options.executors.get(sandboxId);
 
@@ -351,31 +412,35 @@ export class Gateway {
       return;
     }
 
-    await this.options.runtimeRegistry.run(convKey, async () => {
-      const runtime = await provider.createRuntime({
-        conversationKey: convKey,
-        route,
-        inbound: message,
-        executor,
-        ...(handling.sessionPolicy ? { sessionPolicy: handling.sessionPolicy } : {}),
-      });
+    await this.options.runtimeRegistry.run(
+      convKey,
+      async () => {
+        const runtime = await provider.createRuntime({
+          conversationKey: convKey,
+          route,
+          inbound: message,
+          executor,
+          ...(handling.sessionPolicy ? { sessionPolicy: handling.sessionPolicy } : {}),
+        });
 
-      return {
-        key: convKey,
-        routeId: route.routeId,
-        route: route.profile,
-        providerId,
-        sandboxId,
-        runtime,
-        close: async () => {
-          runtime.dispose();
-        },
-      };
-    }, async (runtime) => {
-      await this.processMessage(connector, runtime.runtime, route, message, {
-        includeReplyTo: handling.includeReplyTo,
-      });
-    });
+        return {
+          key: convKey,
+          routeId: route.routeId,
+          route: route.profile,
+          providerId,
+          sandboxId,
+          runtime,
+          close: async () => {
+            runtime.dispose();
+          },
+        };
+      },
+      async (runtime) => {
+        await this.processMessage(connector, runtime.runtime, route, message, {
+          includeReplyTo: handling.includeReplyTo,
+        });
+      },
+    );
   }
 
   private async processMessage(
@@ -392,7 +457,8 @@ export class Gateway {
       {
         connectorId: message.connectorId,
         routeId: route.routeId,
-        channelId: message.routeChannelId,
+        sourceType: message.source.type,
+        sourceId: message.source.id,
         chatId: message.chatId,
         threadId: message.threadId,
         messageId: message.messageId,
@@ -439,7 +505,7 @@ export class Gateway {
           ? {
             ...this.outboundBaseFromInbound(message),
             mode: "update",
-            targetMessageId: rootMessageId!,
+            targetMessageId: rootMessageId,
             text: `Error: ${error instanceof Error ? error.message : String(error)}`,
           }
           : {
@@ -535,6 +601,7 @@ export class Gateway {
     connector: ConnectorPlugin,
     message: InboundEnvelope,
     command: ControlCommand,
+    route: RouteResolution,
   ): Promise<void> {
     const convKey = conversationKey(message);
     if (command === "cancel") {
@@ -548,13 +615,7 @@ export class Gateway {
       return;
     }
 
-    const route = this.options.routeResolver.resolve(message.routeId);
-    if (!route) {
-      await this.sendCommandReply(connector, message, `No route configured for route '${message.routeId}'.`);
-      return;
-    }
-
-    const providerId = route.profile.providerId ?? this.options.config.providers.defaultProviderId;
+    const providerId = route.profile.provider;
     const provider = this.options.providers.get(providerId);
     if (!provider) {
       throw new Error(`Route provider not available (provider='${providerId}')`);
