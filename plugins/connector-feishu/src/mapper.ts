@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import type { GatewayLogger, InboundAttachment, InboundEnvelope } from "@dobby.ai/plugin-sdk";
@@ -70,6 +70,80 @@ function safeParseJson(value: string): unknown {
 
 function sanitizeFileName(value: string): string {
   return value.replaceAll(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function headerValue(headers: unknown, name: string): string | undefined {
+  if (!headers || typeof headers !== "object") {
+    return undefined;
+  }
+
+  const record = headers as Record<string, unknown>;
+  const target = record[name] ?? record[name.toLowerCase()] ?? record[name.toUpperCase()];
+  if (typeof target === "string" && target.trim().length > 0) {
+    return target.trim();
+  }
+  if (Array.isArray(target)) {
+    const first = target.find((value) => typeof value === "string" && value.trim().length > 0);
+    return typeof first === "string" ? first.trim() : undefined;
+  }
+  return undefined;
+}
+
+function normalizeMimeType(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const [mimeType] = value.split(";", 1);
+  return mimeType?.trim().toLowerCase() || undefined;
+}
+
+function sniffImageMimeType(buffer: Buffer): string | undefined {
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return "image/png";
+  }
+
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+
+  if (buffer.length >= 6) {
+    const header = buffer.subarray(0, 6).toString("ascii");
+    if (header === "GIF87a" || header === "GIF89a") {
+      return "image/gif";
+    }
+  }
+
+  if (
+    buffer.length >= 12
+    && buffer.subarray(0, 4).toString("ascii") === "RIFF"
+    && buffer.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+
+  if (buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) {
+    return "image/bmp";
+  }
+
+  return undefined;
+}
+
+function extensionForMimeType(mimeType?: string): string | undefined {
+  switch (mimeType) {
+    case "image/png":
+      return "png";
+    case "image/jpeg":
+      return "jpg";
+    case "image/gif":
+      return "gif";
+    case "image/webp":
+      return "webp";
+    case "image/bmp":
+      return "bmp";
+    default:
+      return undefined;
+  }
 }
 
 function normalizeWhitespace(value: string): string {
@@ -200,8 +274,7 @@ function attachmentDescriptor(event: FeishuMessageEvent): AttachmentDescriptor |
   if (event.message.message_type === "image" && typeof parsed.image_key === "string") {
     return {
       fileKey: parsed.image_key,
-      fileName: `image-${parsed.image_key}.png`,
-      mimeType: "image/png",
+      fileName: `image-${parsed.image_key}`,
       resourceType: "image",
     };
   }
@@ -223,7 +296,9 @@ async function downloadAttachment(
   descriptor: AttachmentDescriptor,
   attachmentDir: string,
 ): Promise<InboundAttachment> {
-  const targetPath = join(attachmentDir, sanitizeFileName(descriptor.fileName));
+  await mkdir(attachmentDir, { recursive: true });
+
+  let targetPath = join(attachmentDir, sanitizeFileName(descriptor.fileName));
   const resource = await client.im.v1.messageResource.get({
     params: {
       type: descriptor.resourceType,
@@ -235,10 +310,28 @@ async function downloadAttachment(
   });
 
   await resource.writeFile(targetPath);
+  let resolvedMimeType = normalizeMimeType(descriptor.mimeType) ?? normalizeMimeType(headerValue(resource.headers, "content-type"));
+  let resolvedFileName = descriptor.fileName;
+
+  if (descriptor.resourceType === "image") {
+    const fileBuffer = await readFile(targetPath);
+    resolvedMimeType = sniffImageMimeType(fileBuffer) ?? resolvedMimeType;
+
+    const extension = extensionForMimeType(resolvedMimeType);
+    if (extension) {
+      resolvedFileName = `${descriptor.fileName}.${extension}`;
+      const finalPath = join(attachmentDir, sanitizeFileName(resolvedFileName));
+      if (finalPath !== targetPath) {
+        await rename(targetPath, finalPath);
+        targetPath = finalPath;
+      }
+    }
+  }
+
   return {
     id: descriptor.fileKey,
-    fileName: descriptor.fileName,
-    ...(descriptor.mimeType ? { mimeType: descriptor.mimeType } : {}),
+    fileName: resolvedFileName,
+    ...(resolvedMimeType ? { mimeType: resolvedMimeType } : {}),
     localPath: targetPath,
   };
 }
@@ -250,14 +343,12 @@ export async function mapFeishuMessageEvent(options: MapFeishuMessageOptions): P
   }
 
   const routeChannelId = event.message.chat_id;
-  const attachmentDir = join(attachmentsRoot, routeChannelId, event.message.message_id);
-  await mkdir(attachmentDir, { recursive: true });
-
   const attachments: InboundAttachment[] = [];
   if (downloadAttachments) {
     const descriptor = attachmentDescriptor(event);
     if (descriptor) {
       try {
+        const attachmentDir = join(attachmentsRoot, routeChannelId, event.message.message_id);
         attachments.push(await downloadAttachment(client, event, descriptor, attachmentDir));
       } catch (error) {
         logger.warn(
@@ -289,7 +380,6 @@ export async function mapFeishuMessageEvent(options: MapFeishuMessageOptions): P
     || (!botOpenId && !botName && (event.message.mentions?.length ?? 0) > 0);
 
   const timestampMs = Number.parseInt(event.message.create_time, 10);
-  const threadId = event.message.root_id ?? event.message.thread_id;
 
   return {
     connectorId,
@@ -298,7 +388,6 @@ export async function mapFeishuMessageEvent(options: MapFeishuMessageOptions): P
     routeId,
     routeChannelId,
     chatId: event.message.chat_id,
-    ...(threadId ? { threadId } : {}),
     messageId: event.message.message_id,
     userId: senderId,
     text: extractMessageText(event, botOpenId, botName),
