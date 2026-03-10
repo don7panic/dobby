@@ -633,7 +633,7 @@ class ClaudeGatewayRuntime implements GatewayAgentRuntime {
       return new Error(
         `${normalized.message}. Sandbox command was not found: '${attempted}'. ` +
         "Ensure the sandbox image has Claude Code installed and available in PATH, " +
-        "or set providers.instances.<id>.config.executable to a valid in-sandbox executable." +
+        "or set providers.items.<id>.executable to a valid in-sandbox executable." +
         stdoutSuffix +
         stderrSuffix,
       );

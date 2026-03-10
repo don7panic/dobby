@@ -105,23 +105,23 @@ dobby config schema show <contributionId> [--json]
 
 必须检查：
 1. `extensions.allowList`：声明启用的扩展包（仅声明启用，不等于已安装）。
-2. `providers.instances`：至少有一个 provider 实例，并与 `providers.defaultProviderId` 对应。
-3. `connectors.instances`：至少有一个 connector 实例（Discord）。
-4. `connectors.instances.<id>.config.botChannelMap`：`channelId -> routeId` 映射。
-5. `routing.routes.*.projectRoot`：改成你机器上的真实目录。
-6. `routing.routes.*.providerId`：指向已定义 provider 实例。
-7. `routing.routes.*.sandboxId`：可省略；省略时走默认 sandbox。
+2. `providers.items`：至少有一个 provider 实例，并与 `providers.default` 对应。
+3. `connectors.items`：至少有一个 connector 实例（Discord）。
+4. `routes.items.*.projectRoot`：改成你机器上的真实目录。
+5. `bindings.items.*`：为每个入口声明 `(connector, source.type, source.id) -> route`。
+6. `routes.items.*.provider`：可省略；省略时走 `routes.defaults.provider`。
+7. `routes.items.*.sandbox`：可省略；省略时走 `routes.defaults.sandbox`。
 
 默认 sandbox：
-1. 全局默认是 `sandboxes.defaultSandboxId = "host.builtin"`。
-2. route 里若显式写 `sandboxId`，则按 route 覆盖。
+1. 全局默认是 `sandboxes.default = "host.builtin"`。
+2. route 里若显式写 `sandbox`，则按 route 覆盖。
 
 当前默认示例（推荐）：
 
 ```json
 "sandboxes": {
-  "defaultSandboxId": "host.builtin",
-  "instances": {}
+  "default": "host.builtin",
+  "items": {}
 }
 ```
 
@@ -184,7 +184,7 @@ npm run start:local --
 3. `Gateway started`
 
 在 Discord 中验证：
-1. 在已映射频道发送消息（群聊若 `allowMentionsOnly=true` 需 @bot）。
+1. 在已绑定频道发送消息（群聊若 `mentions="required"` 需 @bot）。
 2. Bot 先回复 `_Thinking..._`，随后流式更新。
 3. 发送 `stop`、`/stop` 或 `/cancel` 可取消当前会话中正在执行和排队中的任务。
 4. 发送 `/new` 或 `/reset` 会归档当前会话状态，并让下一条消息从新会话开始。
@@ -194,22 +194,20 @@ npm run start:local --
 如果需要容器沙箱，不再使用 `sandbox.backend` 字段，而是通过扩展实例配置：
 
 1. 安装 `@dobby.ai/sandbox-core`。
-2. 在 `sandboxes.instances` 定义实例（如 `sandbox.docker` 或 `sandbox.boxlite`）。
-3. 将 `sandboxes.defaultSandboxId` 或 `routing.routes.*.sandboxId` 指向对应实例。
+2. 在 `sandboxes.items` 定义实例（如 `sandbox.docker` 或 `sandbox.boxlite`）。
+3. 将 `sandboxes.default` 或 `routes.items.*.sandbox` 指向对应实例。
 
 示意（只展示结构）：
 
 ```json
 "sandboxes": {
-  "defaultSandboxId": "docker.main",
-  "instances": {
+  "default": "docker.main",
+  "items": {
     "docker.main": {
-      "contributionId": "sandbox.docker",
-      "config": {
-        "container": "im-agent-sandbox",
-        "hostWorkspaceRoot": "/Users/you/workspace",
-        "containerWorkspaceRoot": "/workspace"
-      }
+      "type": "sandbox.docker",
+      "container": "im-agent-sandbox",
+      "hostWorkspaceRoot": "/Users/you/workspace",
+      "containerWorkspaceRoot": "/workspace"
     }
   }
 }
@@ -239,6 +237,6 @@ npm run start:local --
    - 检查 docker container 状态，以及 `hostWorkspaceRoot` 是否覆盖 route 的 `projectRoot`。
 
 5. 机器人在群里没反应
-   - 检查频道是否在 `connectors.instances.<id>.config.botChannelMap` 下。
-   - 检查是否需要 @bot（`allowMentionsOnly=true`）。
+   - 检查入口是否已经写进 `bindings.items`。
+   - 检查是否需要 @bot（`mentions="required"`）。
    - 检查 bot 在频道内的读写权限与消息内容权限。

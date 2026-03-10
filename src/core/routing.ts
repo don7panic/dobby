@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -92,8 +93,40 @@ type ParsedGatewayConfig = z.infer<typeof gatewayConfigSchema>;
 type ParsedRouteItem = z.infer<typeof routeItemSchema>;
 type ParsedExtensionItem = z.infer<typeof extensionItemSchema>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const FORBIDDEN_CONNECTOR_CONFIG_KEYS: Record<string, string> = {
+  botChannelMap: "Use bindings.items to map connector sources to routes.",
+  chatRouteMap: "Use bindings.items to map connector sources to routes.",
+  botTokenEnv: "Set botToken directly in connector config or inject it before the config is loaded.",
+};
+
+function isDobbyRepoRoot(candidateDir: string): boolean {
+  const packageJsonPath = resolve(candidateDir, "package.json");
+  const repoConfigPath = resolve(candidateDir, "config", "gateway.json");
+  const localExtensionsScriptPath = resolve(candidateDir, "scripts", "local-extensions.mjs");
+
+  if (!existsSync(packageJsonPath) || !existsSync(repoConfigPath) || !existsSync(localExtensionsScriptPath)) {
+    return false;
+  }
+
+  try {
+    const packageJsonRaw = readFileSync(packageJsonPath, "utf-8");
+    const parsed = JSON.parse(packageJsonRaw) as { name?: unknown };
+    return parsed.name === "dobby";
+  } catch {
+    return false;
+  }
+}
+
+function resolveConfigBaseDir(configPath: string): string {
+  const absoluteConfigPath = resolve(configPath);
+  const configDir = dirname(absoluteConfigPath);
+  const repoRoot = dirname(configDir);
+
+  if (absoluteConfigPath === resolve(repoRoot, "config", "gateway.json") && isDobbyRepoRoot(repoRoot)) {
+    return repoRoot;
+  }
+
+  return configDir;
 }
 
 function resolveMaybeAbsolute(baseDir: string, value: string): string {
@@ -206,69 +239,13 @@ function normalizeBindings(parsed: ParsedGatewayConfig["bindings"]): GatewayConf
   return { items };
 }
 
-function assertNoLegacyFields(rawConfig: unknown): void {
-  if (!isRecord(rawConfig)) {
-    return;
-  }
-
-  if (Object.prototype.hasOwnProperty.call(rawConfig, "routing")) {
-    throw new Error("Legacy top-level field 'routing' is no longer supported. Use top-level 'routes' and 'bindings'.");
-  }
-
-  const rawProviders = rawConfig.providers;
-  if (isRecord(rawProviders) && Object.prototype.hasOwnProperty.call(rawProviders, "instances")) {
-    throw new Error("Legacy field 'providers.instances' is no longer supported. Use providers.items with inline config.");
-  }
-  if (isRecord(rawProviders) && Object.prototype.hasOwnProperty.call(rawProviders, "defaultProviderId")) {
-    throw new Error("Legacy field 'providers.defaultProviderId' is no longer supported. Use providers.default.");
-  }
-
-  const rawConnectors = rawConfig.connectors;
-  if (isRecord(rawConnectors) && Object.prototype.hasOwnProperty.call(rawConnectors, "instances")) {
-    throw new Error("Legacy field 'connectors.instances' is no longer supported. Use connectors.items with inline config.");
-  }
-
-  const rawSandboxes = rawConfig.sandboxes;
-  if (isRecord(rawSandboxes) && Object.prototype.hasOwnProperty.call(rawSandboxes, "instances")) {
-    throw new Error("Legacy field 'sandboxes.instances' is no longer supported. Use sandboxes.items with inline config.");
-  }
-  if (isRecord(rawSandboxes) && Object.prototype.hasOwnProperty.call(rawSandboxes, "defaultSandboxId")) {
-    throw new Error("Legacy field 'sandboxes.defaultSandboxId' is no longer supported. Use sandboxes.default.");
-  }
-
-  const rawConnectorItems = isRecord(rawConnectors) ? rawConnectors.items : undefined;
-  if (!isRecord(rawConnectorItems)) {
-    const rawRoutes = rawConfig.routes;
-    if (isRecord(rawRoutes) && isRecord(rawRoutes.defaults) && Object.prototype.hasOwnProperty.call(rawRoutes.defaults, "projectRoot")) {
-      throw new Error("routes.defaults.projectRoot is not supported. Set projectRoot on each routes.items entry.");
+function validateConnectorConfigKeys(parsed: ParsedGatewayConfig["connectors"]): void {
+  for (const [instanceId, item] of Object.entries(parsed.items)) {
+    for (const [key, message] of Object.entries(FORBIDDEN_CONNECTOR_CONFIG_KEYS)) {
+      if (Object.prototype.hasOwnProperty.call(item, key)) {
+        throw new Error(`connectors.items['${instanceId}'] must not include '${key}'. ${message}`);
+      }
     }
-    return;
-  }
-
-  for (const [instanceId, rawItem] of Object.entries(rawConnectorItems)) {
-    if (!isRecord(rawItem)) {
-      continue;
-    }
-    if (Object.prototype.hasOwnProperty.call(rawItem, "botChannelMap")) {
-      throw new Error(
-        `Legacy field connectors.items['${instanceId}'].botChannelMap is no longer supported. Use bindings.items instead.`,
-      );
-    }
-    if (Object.prototype.hasOwnProperty.call(rawItem, "chatRouteMap")) {
-      throw new Error(
-        `Legacy field connectors.items['${instanceId}'].chatRouteMap is no longer supported. Use bindings.items instead.`,
-      );
-    }
-    if (Object.prototype.hasOwnProperty.call(rawItem, "botTokenEnv")) {
-      throw new Error(
-        `Legacy field connectors.items['${instanceId}'].botTokenEnv is no longer supported. Use botToken directly in config or your own secret injection flow.`,
-      );
-    }
-  }
-
-  const rawRoutes = rawConfig.routes;
-  if (isRecord(rawRoutes) && isRecord(rawRoutes.defaults) && Object.prototype.hasOwnProperty.call(rawRoutes.defaults, "projectRoot")) {
-    throw new Error("routes.defaults.projectRoot is not supported. Set projectRoot on each routes.items entry.");
   }
 }
 
@@ -327,11 +304,10 @@ function validateReferences(parsed: ParsedGatewayConfig, normalizedRoutes: Route
 
 export async function loadGatewayConfig(configPath: string): Promise<GatewayConfig> {
   const absoluteConfigPath = resolve(configPath);
-  const configDir = dirname(absoluteConfigPath);
+  const configBaseDir = resolveConfigBaseDir(absoluteConfigPath);
   const raw = await readFile(absoluteConfigPath, "utf-8");
-  const parsedRaw = JSON.parse(raw) as unknown;
-  assertNoLegacyFields(parsedRaw);
-  const parsed = gatewayConfigSchema.parse(parsedRaw);
+  const parsed = gatewayConfigSchema.parse(JSON.parse(raw) as unknown);
+  validateConnectorConfigKeys(parsed.connectors);
 
   const routeDefaults: RouteDefaultsConfig = {
     provider: parsed.routes.defaults.provider ?? parsed.providers.default,
@@ -340,10 +316,10 @@ export async function loadGatewayConfig(configPath: string): Promise<GatewayConf
     mentions: parsed.routes.defaults.mentions ?? "required",
   };
 
-  const normalizedRoutes = normalizeRoutes(parsed.routes, configDir, routeDefaults);
+  const normalizedRoutes = normalizeRoutes(parsed.routes, configBaseDir, routeDefaults);
   validateReferences(parsed, normalizedRoutes);
 
-  const rootDir = resolveMaybeAbsolute(configDir, parsed.data.rootDir);
+  const rootDir = resolveMaybeAbsolute(configBaseDir, parsed.data.rootDir);
 
   return {
     extensions: normalizeExtensions(parsed.extensions),

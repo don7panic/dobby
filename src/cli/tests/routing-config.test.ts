@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,19 @@ async function writeTempConfig(payload: unknown): Promise<string> {
   const configPath = join(dir, "gateway.json");
   await writeFile(configPath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
   return configPath;
+}
+
+async function writeRepoTempConfig(payload: unknown): Promise<{ repoRoot: string; configPath: string }> {
+  const repoRoot = await mkdtemp(join(tmpdir(), "dobby-routing-repo-"));
+  const configDir = join(repoRoot, "config");
+  await mkdir(configDir, { recursive: true });
+  await mkdir(join(repoRoot, "scripts"), { recursive: true });
+  await writeFile(join(repoRoot, "package.json"), JSON.stringify({ name: "dobby" }), "utf-8");
+  await writeFile(join(repoRoot, "scripts", "local-extensions.mjs"), "#!/usr/bin/env node\n", "utf-8");
+
+  const configPath = join(configDir, "gateway.json");
+  await writeFile(configPath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
+  return { repoRoot, configPath };
 }
 
 function validConfig(): Record<string, unknown> {
@@ -106,45 +119,22 @@ test("loadGatewayConfig applies route defaults and resolves relative paths", asy
   }
 });
 
-test("loadGatewayConfig fails fast on legacy top-level routing", async () => {
+test("loadGatewayConfig resolves data.rootDir from repo root for repo-local config/gateway.json", async () => {
   const payload = validConfig();
-  payload.routing = {
-    routes: {
-      main: {
-        projectRoot: process.cwd(),
-      },
-    },
-  };
+  const { repoRoot, configPath } = await writeRepoTempConfig(payload);
 
-  const configPath = await writeTempConfig(payload);
   try {
-    await assert.rejects(loadGatewayConfig(configPath), /top-level field 'routing'/);
+    const loaded = await loadGatewayConfig(configPath);
+    const mainRoute = loaded.routes.items.main;
+    assert.ok(mainRoute);
+    assert.equal(loaded.data.rootDir, join(repoRoot, "data"));
+    assert.equal(mainRoute.projectRoot, join(repoRoot, "workspace/project-a"));
   } finally {
-    await rm(dirname(configPath), { recursive: true, force: true });
+    await rm(repoRoot, { recursive: true, force: true });
   }
 });
 
-test("loadGatewayConfig fails fast on legacy botTokenEnv", async () => {
-  const payload = validConfig();
-  payload.connectors = {
-    items: {
-      "discord.main": {
-        type: "connector.discord",
-        botName: "dobby-main",
-        botTokenEnv: "DISCORD_BOT_TOKEN",
-      },
-    },
-  };
-
-  const configPath = await writeTempConfig(payload);
-  try {
-    await assert.rejects(loadGatewayConfig(configPath), /botTokenEnv/);
-  } finally {
-    await rm(dirname(configPath), { recursive: true, force: true });
-  }
-});
-
-test("loadGatewayConfig fails fast on legacy connector route maps", async () => {
+test("loadGatewayConfig rejects connector fields reserved by the host", async () => {
   const payload = validConfig();
   payload.connectors = {
     items: {
@@ -161,7 +151,27 @@ test("loadGatewayConfig fails fast on legacy connector route maps", async () => 
 
   const configPath = await writeTempConfig(payload);
   try {
-    await assert.rejects(loadGatewayConfig(configPath), /botChannelMap/);
+    await assert.rejects(loadGatewayConfig(configPath), /must not include 'botChannelMap'/);
+  } finally {
+    await rm(dirname(configPath), { recursive: true, force: true });
+  }
+});
+
+test("loadGatewayConfig rejects connector env indirection fields reserved by the host", async () => {
+  const payload = validConfig();
+  payload.connectors = {
+    items: {
+      "discord.main": {
+        type: "connector.discord",
+        botName: "dobby-main",
+        botTokenEnv: "DISCORD_BOT_TOKEN",
+      },
+    },
+  };
+
+  const configPath = await writeTempConfig(payload);
+  try {
+    await assert.rejects(loadGatewayConfig(configPath), /must not include 'botTokenEnv'/);
   } finally {
     await rm(dirname(configPath), { recursive: true, force: true });
   }

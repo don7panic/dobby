@@ -22,8 +22,9 @@ V3 将扩展系统对齐 VSCode extension 使用体验：
 ### 2.2 配置语义
 
 - `extensions.allowList`：声明哪些包允许加载。
-- `providers/connectors/sandboxes.instances`：绑定 `contributionId + config`。
-- `routing`：路由到实例。
+- `providers/connectors/sandboxes.items`：绑定 `type + inline config`。
+- `routes`：定义可复用的执行 profile。
+- `bindings`：把 connector source 绑定到 route。
 
 新增不变量：
 - allowList 中每个启用包必须能从扩展 store 解析；否则启动 fail-fast。

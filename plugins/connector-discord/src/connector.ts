@@ -243,7 +243,7 @@ export class DiscordConnector implements ConnectorPlugin {
     client.on("messageCreate", async (message: Message) => {
       if (client !== this.client || !client.user || !this.ctx || !this.botUserId) return;
 
-      // v1 explicitly disables DM routing; only mapped guild channels are processed.
+      // v1 explicitly disables DM handling; only bound guild channels are processed.
       if (!message.guildId) {
         return;
       }

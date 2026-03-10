@@ -150,7 +150,7 @@ export function buildProgram(): Command {
       });
     });
 
-  const routeCommand = program.command("route").description("Manage routing profiles");
+  const routeCommand = program.command("route").description("Manage route profiles");
 
   routeCommand
     .command("list")

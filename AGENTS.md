@@ -57,7 +57,7 @@ npm run plugins:setup:local
 
 - 普通运行路径不会自动读取 `.env`
 - 只有 `npm run dev:local` 和 `npm run start:local` 使用 `--env-file-if-exists=.env`
-- Discord connector 仍以显式 `botToken` 配置为主，不依赖 `botTokenEnv`
+- Discord connector 仍以显式 `botToken` 配置为主
 
 ## 3. 代码结构与职责
 
@@ -109,22 +109,21 @@ npm run plugins:setup:local
 
 必须保持以下事实成立：
 
-- `providers.defaultProviderId` 必须存在于 `providers.instances`
-- `sandboxes.defaultSandboxId` 若存在且不是 `host.builtin`，必须存在于 `sandboxes.instances`
-- `routing.defaultRouteId` 若存在，必须存在于 `routing.routes`
-- 每条 route 的 `providerId` 若未设置，运行时回落到 `providers.defaultProviderId`
-- 每条 route 的 `sandboxId` 若未设置，运行时回落到 `sandboxes.defaultSandboxId ?? host.builtin`
-- `connectors.instances[*].config.botChannelMap[channelId]` 必须指向存在的 `routing.routes[routeId]`
-- `providers/connectors/sandboxes.instances[*].contributionId` 必须能在“已安装且已启用的扩展 contribution”里找到
+- `providers.default` 必须存在于 `providers.items`
+- `sandboxes.default` 若存在且不是 `host.builtin`，必须存在于 `sandboxes.items`
+- `routes.defaults.provider` 若未设置，运行时回落到 `providers.default`
+- `routes.defaults.sandbox` 若未设置，运行时回落到 `sandboxes.default ?? host.builtin`
+- 每条 route 在加载后都会补全 `provider`、`sandbox`、`tools`、`mentions`
+- `bindings.items[*].connector` 必须指向存在的 `connectors.items`
+- `bindings.items[*].route` 必须指向存在的 `routes.items`
+- 同一个 `(connector, source.type, source.id)` 只能出现一次
+- `providers/connectors/sandboxes.items[*].type` 必须能在“已安装且已启用的扩展 contribution”里找到
 - `data.rootDir`、`projectRoot`、`systemPromptFile` 都会在加载时转成绝对路径
 - `data.rootDir` 的相对路径有一条特殊规则：
-  - 如果配置文件位于 `.../config/gateway.json`，则相对路径相对仓库根目录解析
+  - 如果配置文件位于 `.../config/gateway.json` 且父目录是 dobby 仓库根目录，则相对仓库根目录解析
   - 否则相对配置文件所在目录解析
-
-legacy 字段会被直接拒绝：
-
-- `routing.channelMap`
-- `connectors.instances.<id>.config.botTokenEnv`
+- `projectRoot`、`systemPromptFile` 等其他相对路径统一相对配置文件所在目录解析
+- connector 私有 config 不能再承载入口映射；入口绑定统一写在 `bindings.items`
 
 ## 5. 运行时行为不变量
 
@@ -133,16 +132,16 @@ legacy 字段会被直接拒绝：
 - 去重键：
   - `connectorId + platform + accountId + chatId + messageId`
 - 线程路由规则：
-  - Discord 线程消息使用父频道 ID 查 `botChannelMap`
-- Discord connector 当前只处理已映射的 guild channel
+  - Discord 线程消息使用父频道 ID 查 `bindings.items`
+- Discord connector 当前只处理已绑定的 guild channel
   - DM 在 connector 侧被直接忽略，虽然核心类型保留了 `isDirectMessage`
 - mention 策略：
-  - `allowMentionsOnly=true` 时，群聊消息必须 @bot 才会进入 runtime
+  - `mentions="required"` 时，群聊消息必须 @bot 才会进入 runtime
 - 控制命令：
   - `stop`、`/stop`、`/cancel` 会取消当前与排队中的该会话任务
   - `/new`、`/reset` 会 reset runtime，并在 provider 支持时归档历史 session
 - 附件处理：
-  - Discord 附件优先下载到 `data/attachments/<connectorId>/<routeChannelId>/<messageId>/...`
+  - Discord / Feishu 附件优先下载到 `data/attachments/<connectorId>/<source.id>/<messageId>/...`
   - 图片转为 `session.prompt(..., { images })`
   - 非图片附件路径或远程 URL 以 `<attachments>...</attachments>` 注入 prompt
 - 流式输出：
@@ -263,7 +262,6 @@ npm run extensions:list:local
 ## 10. 当前已知边界
 
 - 有一批 focused tests，但仍缺少端到端自动化测试
-- `maxConcurrentTurns` 已在 schema / CLI 中存在，但运行时还没有按 route 并发上限执行
 - cron job 的 `sessionPolicy` 目前是 schema / CLI 字段，调度执行时未生效
 - Discord connector 仍不处理 DM
 - `extension uninstall` 不会自动清理 `gateway.json` 中的 allowList 和实例引用

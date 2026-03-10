@@ -133,7 +133,7 @@ cron 配置路径优先级：
 
 ## 运行时目录
 
-`data.rootDir` 默认是 `./data`。加载后会生成这些目录：
+`data.rootDir` 默认是 `./data`。如果配置文件是仓库内的 `./config/gateway.json`，它会相对仓库根目录解析；否则相对配置文件所在目录解析。加载后会生成这些目录：
 
 - `sessions/`
 - `attachments/`

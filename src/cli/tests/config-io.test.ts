@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
-import { DEFAULT_CONFIG_PATH, resolveConfigPath } from "../shared/config-io.js";
+import { DEFAULT_CONFIG_PATH, resolveConfigPath, resolveDataRootDir } from "../shared/config-io.js";
 
 test("resolveConfigPath defaults to $HOME/.dobby/gateway.json", () => {
   assert.equal(DEFAULT_CONFIG_PATH, resolve(homedir(), ".dobby", "gateway.json"));
@@ -69,5 +69,24 @@ test("resolveConfigPath supports relative and home-prefixed DOBBY_CONFIG_PATH", 
       env: { DOBBY_CONFIG_PATH: "~/custom-gateway.json" },
     }),
     resolve(homedir(), "custom-gateway.json"),
+  );
+});
+
+test("resolveDataRootDir uses repo root for repo-local config/gateway.json", async () => {
+  const repoRoot = await mkdtemp(resolve(tmpdir(), "dobby-data-root-repo-"));
+  await mkdir(resolve(repoRoot, "config"), { recursive: true });
+  await mkdir(resolve(repoRoot, "scripts"), { recursive: true });
+
+  await writeFile(resolve(repoRoot, "package.json"), JSON.stringify({ name: "dobby" }), "utf-8");
+  await writeFile(resolve(repoRoot, "config", "gateway.json"), "{}", "utf-8");
+  await writeFile(resolve(repoRoot, "scripts", "local-extensions.mjs"), "#!/usr/bin/env node\n", "utf-8");
+
+  assert.equal(
+    resolveDataRootDir(resolve(repoRoot, "config", "gateway.json"), {
+      data: {
+        rootDir: "./data",
+      },
+    }),
+    resolve(repoRoot, "data"),
   );
 });

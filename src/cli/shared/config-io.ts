@@ -58,6 +58,18 @@ function isDobbyRepoRoot(candidateDir: string): boolean {
   }
 }
 
+function resolveConfigBaseDir(configPath: string): string {
+  const absoluteConfigPath = resolve(configPath);
+  const configDir = dirname(absoluteConfigPath);
+  const repoRoot = dirname(configDir);
+
+  if (absoluteConfigPath === resolve(repoRoot, "config", "gateway.json") && isDobbyRepoRoot(repoRoot)) {
+    return repoRoot;
+  }
+
+  return configDir;
+}
+
 /**
  * Scans current directory and ancestors to find a local dobby repo config path.
  */
@@ -127,7 +139,7 @@ function initCommandHint(): string {
  */
 export function resolveDataRootDir(configPath: string, rawConfig: RawGatewayConfig): string {
   const absoluteConfigPath = resolve(configPath);
-  const configDir = dirname(absoluteConfigPath);
+  const baseDir = resolveConfigBaseDir(absoluteConfigPath);
   const rawRootDir = typeof rawConfig.data?.rootDir === "string" && rawConfig.data.rootDir.trim().length > 0
     ? rawConfig.data.rootDir
     : "./data";
@@ -137,7 +149,7 @@ export function resolveDataRootDir(configPath: string, rawConfig: RawGatewayConf
     return resolve(expanded);
   }
 
-  return resolve(configDir, expanded);
+  return resolve(baseDir, expanded);
 }
 
 /**

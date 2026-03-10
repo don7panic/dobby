@@ -100,7 +100,7 @@ Cron 设计应保持 connector-agnostic，避免绑定 Discord 语义：
 
 建议将 Cron 配置从 `gateway.json` 中拆出，使用独立配置文件：
 
-1. `gateway.json` 继续只描述 gateway 核心（routing/providers/connectors/sandboxes/data）。
+1. `gateway.json` 继续只描述 gateway 核心（routes/bindings/providers/connectors/sandboxes/data）。
 2. `cron.json` 独立描述调度器参数（enabled/store/poll/concurrency/recovery）。
 3. CronService 启动时同时读取：
    - gateway 配置（用于 route/connector 运行时校验）
@@ -178,7 +178,7 @@ type JobSchedule =
 
 type JobDelivery = {
   connectorId: string;      // connector instance id (e.g. discord.main)
-  routeId: string;          // existing routing.routes key
+  routeId: string;          // existing routes.items key
   channelId: string;        // result channel/chat id
   threadId?: string;
 };
@@ -216,11 +216,11 @@ type ScheduledJob = {
 - `userId = "cron"`
 - `text = job.prompt`
 - `attachments = []`
-- `mentionedBot = true`（规避 `allowMentionsOnly` 在群聊时被忽略）
-- `routeId = job.delivery.routeId`
+- `mentionedBot = true`（规避 `mentions="required"` 在群聊时被忽略）
+- `source = { type: "chat", id: job.delivery.channelId }`
 - `chatId = job.delivery.channelId`
 - `threadId = job.delivery.threadId`（若有）
-- `routeChannelId` 在 v1 先与 `channelId` 保持一致（Discord-first）
+- `routeIdOverride = job.delivery.routeId`
 - `conversationKey` 使用 run 级唯一值（如 `cron:<jobId>:<runTs>`），不复用频道常规会话 key
 
 然后交给 Gateway 处理（建议新增 `handleScheduled` 包装入口，内部复用现有流程）。
@@ -353,7 +353,7 @@ v1 建议实现以下最小鲁棒性（借鉴 openclaw）：
 
 1. **会话语义误解风险**：容易把“stateless”理解为“完全不创建 runtime”，造成实现偏差。
    - 缓解：统一术语，明确“默认是 transient runtime，不复用 conversation memory”。
-2. **allowMentionsOnly**：定时任务不是用户 @bot 消息，需显式标记 `mentionedBot=true` 或在调度入口跳过该限制。
+2. **mentions="required"**：定时任务不是用户 @bot 消息，需显式标记 `mentionedBot=true` 或在调度入口跳过该限制。
 3. **时间语义**：cron 时区必须显式策略（默认系统时区，支持 per-job tz）。
 4. **重复触发**：在崩溃恢复等异常边界可能出现少量重复触发（best-effort at-least-once）。
    - 缓解：通过 `runningAtMs` + 持久化时序控制尽量降低重复概率。

@@ -1472,7 +1472,7 @@ class ClaudeCliGatewayRuntime implements GatewayAgentRuntime {
     if (asErr.code === "ENOENT") {
       return new Error(
         `Claude CLI command not found: '${this.providerConfig.command}'. `
-        + "Install Claude Code CLI and ensure it is available in PATH, or set providers.instances.<id>.config.command to an absolute executable path.",
+        + "Install Claude Code CLI and ensure it is available in PATH, or set providers.items.<id>.command to an absolute executable path.",
       );
     }
 

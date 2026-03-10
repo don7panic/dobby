@@ -6,6 +6,7 @@ import { parseControlCommand, type ControlCommand } from "./control-command.js";
 import type { DedupStore } from "./dedup-store.js";
 import { BindingResolver, RouteResolver } from "./routing.js";
 import { RuntimeRegistry } from "./runtime-registry.js";
+import { createTypingKeepAliveController } from "./typing-controller.js";
 import type {
   BindingResolution,
   ConnectorPlugin,
@@ -56,15 +57,6 @@ interface ResolvedMessageRoute {
   route: RouteResolution;
   routeId: string;
   binding?: BindingResolution;
-}
-
-const TYPING_INITIAL_DELAY_MS = 1_200;
-const TYPING_KEEPALIVE_INTERVAL_MS = 8_000;
-const TYPING_CHECK_INTERVAL_MS = 1_000;
-
-interface TypingController {
-  touchOutput: () => void;
-  stop: () => void;
 }
 
 export interface ScheduledExecutionRequest {
@@ -211,59 +203,6 @@ export class Gateway {
       mode: "create",
       text,
     });
-  }
-
-  private startTypingKeepAlive(connector: ConnectorPlugin, message: InboundEnvelope): TypingController {
-    const sendTypingMethod = connector.sendTyping;
-    if (!connector.capabilities.supportsTyping || !sendTypingMethod) {
-      return {
-        touchOutput: () => {},
-        stop: () => {},
-      };
-    }
-
-    const typingTarget = this.outboundBaseFromInbound(message);
-    let stopped = false;
-    let inFlight = false;
-    let lastTypingAtMs = 0;
-    let lastOutputAtMs = Date.now();
-    const sendTyping = async (): Promise<void> => {
-      if (stopped || inFlight) return;
-      const now = Date.now();
-      if (now - lastOutputAtMs < TYPING_INITIAL_DELAY_MS) return;
-      if (lastTypingAtMs > 0 && now - lastTypingAtMs < TYPING_KEEPALIVE_INTERVAL_MS) return;
-      inFlight = true;
-      try {
-        await sendTypingMethod.call(connector, typingTarget);
-        lastTypingAtMs = Date.now();
-      } catch (error) {
-        this.options.logger.warn(
-          {
-            err: error,
-            connectorId: message.connectorId,
-            chatId: message.chatId,
-            threadId: message.threadId,
-          },
-          "Failed to send typing indicator",
-        );
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    const checkTimer = setInterval(() => {
-      void sendTyping();
-    }, TYPING_CHECK_INTERVAL_MS);
-
-    return {
-      touchOutput: () => {
-        lastOutputAtMs = Date.now();
-      },
-      stop: () => {
-        stopped = true;
-        clearTimeout(checkTimer);
-      },
-    };
   }
 
   private async handleInbound(message: InboundEnvelope): Promise<void> {
@@ -466,12 +405,13 @@ export class Gateway {
       "Processing inbound message",
     );
 
-    const typingController = this.startTypingKeepAlive(connector, message);
+    const typingController = createTypingKeepAliveController(connector, message, this.options.logger);
     let unsubscribe: (() => void) | null = null;
     const forwarder = new EventForwarder(connector, message, null, this.options.logger, {
-      onOutboundActivity: typingController.touchOutput,
+      onOutboundActivity: typingController.markVisibleOutput,
     });
     try {
+      await typingController.prime();
       unsubscribe = runtime.subscribe(forwarder.handleEvent);
 
       const payload = await this.buildPromptPayload(message);
