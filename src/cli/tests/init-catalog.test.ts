@@ -2,95 +2,135 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createInitSelectionConfig } from "../shared/init-catalog.js";
 
-test("createInitSelectionConfig wires explicit Discord bot config for provider.pi", () => {
-  const selected = createInitSelectionConfig(["provider.pi"], "connector.discord", {
-    routeId: "main",
-    projectRoot: "/tmp/project",
-    allowAllMessages: false,
-    botName: "dobby-main",
-    botToken: "token-abc",
-    channelId: "123",
+test("createInitSelectionConfig writes Discord starter template for provider.pi", () => {
+  const selected = createInitSelectionConfig(["provider.pi"], ["connector.discord"], {
     routeProviderChoiceId: "provider.pi",
   });
 
-  assert.deepEqual(selected.connectorConfig, {
-    botName: "dobby-main",
-    botToken: "token-abc",
-    reconnectStaleMs: 60_000,
-    reconnectCheckIntervalMs: 10_000,
-  });
   assert.deepEqual(selected.providerChoiceIds, ["provider.pi"]);
-  assert.equal(selected.providerInstances.length, 1);
+  assert.deepEqual(selected.connectorChoiceIds, ["connector.discord"]);
+  assert.equal(selected.routeId, "main");
   assert.equal(selected.providerInstanceId, "pi.main");
-  assert.equal(selected.providerContributionId, "provider.pi");
-  assert.equal(selected.routeProfile.provider, "pi.main");
-  assert.equal(selected.routeProfile.mentions, "required");
-  assert.equal(selected.bindingId, "discord.main.main");
-  assert.deepEqual(selected.bindingConfig, {
-    connector: "discord.main",
-    source: {
-      type: "channel",
-      id: "123",
+  assert.deepEqual(selected.providerInstances, [{
+    choiceId: "provider.pi",
+    instanceId: "pi.main",
+    contributionId: "provider.pi",
+    config: {
+      provider: "custom-openai",
+      model: "example-model",
+      thinkingLevel: "off",
+      modelsFile: "./models.custom.json",
     },
-    route: "main",
+  }]);
+  assert.deepEqual(selected.connectorInstances, [{
+    choiceId: "connector.discord",
+    instanceId: "discord.main",
+    contributionId: "connector.discord",
+    config: {
+      botName: "dobby-main",
+      botToken: "REPLACE_WITH_DISCORD_BOT_TOKEN",
+      reconnectStaleMs: 60_000,
+      reconnectCheckIntervalMs: 10_000,
+    },
+  }]);
+  assert.deepEqual(selected.routeProfile, {
+    projectRoot: "./REPLACE_WITH_PROJECT_ROOT",
+    tools: "full",
+    systemPromptFile: "",
+    mentions: "required",
+    provider: "pi.main",
+    sandbox: "host.builtin",
   });
+  assert.deepEqual(selected.bindings, [{
+    id: "discord.main.main",
+    config: {
+      connector: "discord.main",
+      source: {
+        type: "channel",
+        id: "YOUR_DISCORD_CHANNEL_ID",
+      },
+      route: "main",
+    },
+  }]);
 });
 
-test("createInitSelectionConfig wires explicit Discord bot config for provider.claude-cli", () => {
-  const selected = createInitSelectionConfig(["provider.claude-cli"], "connector.discord", {
-    routeId: "support",
-    projectRoot: "/tmp/project",
-    allowAllMessages: true,
-    botName: "ops-bot",
-    botToken: "token-xyz",
-    channelId: "999",
+test("createInitSelectionConfig writes Feishu starter template for provider.claude-cli", () => {
+  const selected = createInitSelectionConfig(["provider.claude-cli"], ["connector.feishu"], {
     routeProviderChoiceId: "provider.claude-cli",
   });
 
-  assert.deepEqual(selected.connectorConfig, {
-    botName: "ops-bot",
-    botToken: "token-xyz",
-    reconnectStaleMs: 60_000,
-    reconnectCheckIntervalMs: 10_000,
-  });
   assert.deepEqual(selected.providerChoiceIds, ["provider.claude-cli"]);
-  assert.equal(selected.providerInstances.length, 1);
+  assert.deepEqual(selected.connectorChoiceIds, ["connector.feishu"]);
+  assert.equal(selected.routeId, "main");
   assert.equal(selected.providerInstanceId, "claude-cli.main");
-  assert.equal(selected.providerContributionId, "provider.claude-cli");
-  assert.equal(selected.routeProfile.provider, "claude-cli.main");
-  assert.equal(selected.routeProfile.mentions, "optional");
-  assert.deepEqual(selected.bindingConfig, {
-    connector: "discord.main",
-    source: {
-      type: "channel",
-      id: "999",
+  assert.deepEqual(selected.connectorInstances, [{
+    choiceId: "connector.feishu",
+    instanceId: "feishu.main",
+    contributionId: "connector.feishu",
+    config: {
+      appId: "REPLACE_WITH_FEISHU_APP_ID",
+      appSecret: "REPLACE_WITH_FEISHU_APP_SECRET",
+      domain: "feishu",
+      messageFormat: "card_markdown",
+      replyMode: "direct",
+      downloadAttachments: true,
     },
-    route: "support",
-  });
+  }]);
+  assert.deepEqual(selected.bindings, [{
+    id: "feishu.main.main",
+    config: {
+      connector: "feishu.main",
+      source: {
+        type: "chat",
+        id: "YOUR_FEISHU_CHAT_ID",
+      },
+      route: "main",
+    },
+  }]);
 });
 
-test("createInitSelectionConfig supports multiple providers and uses explicit route provider", () => {
-  const selected = createInitSelectionConfig(["provider.pi", "provider.claude-cli"], "connector.discord", {
-    routeId: "ops",
-    projectRoot: "/tmp/project",
-    allowAllMessages: false,
-    botName: "dobby-multi",
-    botToken: "token-multi",
-    channelId: "777",
-    routeProviderChoiceId: "provider.claude-cli",
-  });
+test("createInitSelectionConfig supports multiple providers and connectors with one default provider", () => {
+  const selected = createInitSelectionConfig(
+    ["provider.pi", "provider.claude-cli"],
+    ["connector.discord", "connector.feishu"],
+    {
+      routeProviderChoiceId: "provider.claude-cli",
+    },
+  );
 
   assert.deepEqual(selected.providerChoiceIds, ["provider.pi", "provider.claude-cli"]);
-  assert.deepEqual(
-    selected.providerInstances.map((item) => item.instanceId),
-    ["pi.main", "claude-cli.main"],
-  );
+  assert.deepEqual(selected.connectorChoiceIds, ["connector.discord", "connector.feishu"]);
   assert.deepEqual(selected.extensionPackages, [
     "@dobby.ai/provider-pi",
     "@dobby.ai/provider-claude-cli",
     "@dobby.ai/connector-discord",
+    "@dobby.ai/connector-feishu",
   ]);
   assert.equal(selected.providerInstanceId, "claude-cli.main");
   assert.equal(selected.routeProfile.provider, "claude-cli.main");
   assert.equal(selected.routeProviderChoiceId, "provider.claude-cli");
+  assert.deepEqual(selected.bindings, [
+    {
+      id: "discord.main.main",
+      config: {
+        connector: "discord.main",
+        source: {
+          type: "channel",
+          id: "YOUR_DISCORD_CHANNEL_ID",
+        },
+        route: "main",
+      },
+    },
+    {
+      id: "feishu.main.main",
+      config: {
+        connector: "feishu.main",
+        source: {
+          type: "chat",
+          id: "YOUR_FEISHU_CHAT_ID",
+        },
+        route: "main",
+      },
+    },
+  ]);
 });

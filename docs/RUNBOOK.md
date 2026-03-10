@@ -30,14 +30,18 @@ npm run check
 cp .env.example .env
 ```
 
-编辑 `.env`，至少设置：
+编辑 `.env`，按需设置：
 
 ```bash
-DISCORD_BOT_TOKEN=你的真实Token
+ANTHROPIC_API_KEY=你的真实Key
 LOG_LEVEL=info
 ```
 
 说明：
+1. Discord connector 当前读取 `gateway.json` 里的 `connectors.items[*].botToken`，不支持 `botTokenEnv`。
+2. `.env` 主要用于 Claude 类 provider 的鉴权变量，以及 `LOG_LEVEL` 这类进程级配置。
+
+加载行为：
 1. `npm run start --` 不会自动加载 `.env`，请先导出变量。
 2. `npm run start:local --` 会通过 `--env-file-if-exists=.env` 自动加载。
 
@@ -68,36 +72,31 @@ cp config/gateway.example.json config/gateway.json
 
 说明：
 1. 若你使用 `dobby init` 并选择了 `provider.pi`，`models.custom.json` 会在缺失时自动生成。
-2. 手动维护配置时，仍可参考 `config/models.custom.example.json`。
+2. `dobby init` 生成的是模板配置；写入后需要先替换 `gateway.json` 里的占位值。
+3. 手动维护配置时，仍可参考 `config/models.custom.example.json`。
 
-### 4.1 CLI config 命令（硬切）
+### 4.1 CLI config 命令
 
-`config` 已切换为交互与结构化查看，不再支持路径式 `get/set/unset`。
+`config` 现在只保留查看与 schema inspect；配置变更建议直接编辑 `gateway.json`。
 
 可用命令：
 
 ```bash
 dobby config show [section] [--json]
 dobby config list [section] [--json]
-dobby config edit
 dobby config schema list [--json]
 dobby config schema show <contributionId> [--json]
 ```
 
 说明：
-1. `config edit` 与 `configure` 在编辑 provider/connector 实例时，会优先读取扩展暴露的 `configSchema` 动态生成字段输入。
-2. 默认仅询问关键字段；带默认值的高级选项可在提示时按需展开。
-3. 若某个 contribution 没有可用 `configSchema`，CLI 会先提示原因（例如扩展 disabled/未安装）；未加载 schema 时会要求你确认是否继续使用 JSON 文本输入。
-4. `dobby init` 也会在安装扩展后按 `configSchema` 动态询问 provider/connector 的配置字段（Discord connector 保留专用引导配置）。
-
-旧命令映射：
-1. `config get ...` -> `config show` 或 `config list`
-2. `config set ...` -> `config edit`
-3. `config unset ...` -> 使用专用删除命令（`channel unset`、`route remove`、`extension uninstall`）
+1. `dobby init` 支持多 provider / 多 connector 选择，并会为每个所选 connector 生成一条默认 binding。
+2. `config schema show <contributionId>` 可用于查看扩展真实接受的字段。
+3. `dobby doctor` 除了结构校验，还会识别 `REPLACE_WITH_*` / `YOUR_*` 这类 init 占位值。
+4. 编辑完 `gateway.json` 后，建议执行 `dobby doctor` 或直接 `dobby start` 做校验。
 
 `init` 语义说明：
 1. `dobby init` 仅用于首次初始化。
-2. 若配置文件已存在，`init` 会直接报错；请改用 `dobby config edit` 或 `dobby configure`。
+2. 若配置文件已存在，`init` 会直接报错；请直接编辑现有配置文件。
 
 ## 5. 关键配置说明（v3）
 
@@ -106,7 +105,7 @@ dobby config schema show <contributionId> [--json]
 必须检查：
 1. `extensions.allowList`：声明启用的扩展包（仅声明启用，不等于已安装）。
 2. `providers.items`：至少有一个 provider 实例，并与 `providers.default` 对应。
-3. `connectors.items`：至少有一个 connector 实例（Discord）。
+3. `connectors.items`：至少有一个 connector 实例。
 4. `routes.items.*.projectRoot`：改成你机器上的真实目录。
 5. `bindings.items.*`：为每个入口声明 `(connector, source.type, source.id) -> route`。
 6. `routes.items.*.provider`：可省略；省略时走 `routes.defaults.provider`。
@@ -224,19 +223,22 @@ npm run start:local --
 
 ## 11. 常见问题
 
-1. `Discord bot token env 'DISCORD_BOT_TOKEN' is not set`
-   - 未导出环境变量，先执行 `set -a; source .env; set +a`，或使用 `npm run start:local`。
+1. Discord 无法登录 / 提示 token 为空
+   - 检查 `gateway.json` 中 `connectors.items[*].botToken` 是否已填写；当前配置模型不支持 `botTokenEnv`。
 
-2. `Configured model 'provider/model' not found`
+2. `doctor` 提示 placeholder value / `REPLACE_WITH_*` / `YOUR_*`
+   - 这是 `dobby init` 生成的模板占位值还没替换。直接编辑 `gateway.json`，改成你的真实 token / appId / appSecret / channelId / chatId / projectRoot。
+
+3. `Configured model 'provider/model' not found`
    - 检查 provider 实例中的 `provider/model/modelsFile` 是否和 `config/models.custom.json` 一致。
 
-3. `Extension package 'xxx' is not installed in '.../data/extensions'`
+4. `Extension package 'xxx' is not installed in '.../data/extensions'`
    - 先执行 `npm run start -- extension install <package>`。
 
-4. Docker 沙箱报 `container is not running` 或越界错误
+5. Docker 沙箱报 `container is not running` 或越界错误
    - 检查 docker container 状态，以及 `hostWorkspaceRoot` 是否覆盖 route 的 `projectRoot`。
 
-5. 机器人在群里没反应
+6. 机器人在群里没反应
    - 检查入口是否已经写进 `bindings.items`。
    - 检查是否需要 @bot（`mentions="required"`）。
    - 检查 bot 在频道内的读写权限与消息内容权限。

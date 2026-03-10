@@ -17,14 +17,14 @@ Discord-first 本地 Agent Gateway。宿主只负责 CLI、网关主流程、扩
 
 - connector source -> binding -> route -> provider / sandbox
 - Discord 频道 / 线程接入；线程消息继续按父频道命中 binding
-- Feishu 长连接消息接入（self-built app，手工安装/配置）
+- Feishu 长连接消息接入（self-built app）
 - Feishu 出站支持普通文本和 Markdown 卡片；默认群内直发，不走 reply thread
 - conversation 级 runtime 复用与串行化
 - 扩展 store 安装、启用、列举与 schema 驱动配置
 - Discord 流式回复、typing、附件下载与图片输入
 - cron 调度：一次性、固定间隔、cron expression
-- 交互式初始化：`dobby init`
-- 交互式配置：`dobby configure` / `dobby config edit`
+- 交互式初始化：`dobby init`（支持多 provider / 多 connector starter）
+- 配置检查与 schema inspect：`dobby config show|list|schema`
 - 诊断与保守修复：`dobby doctor [--fix]`
 
 ## 架构概览
@@ -76,7 +76,7 @@ npm install
 npm run build
 ```
 
-3. 初始化最小可运行配置
+3. 初始化模板配置
 
 ```bash
 npm run start -- init
@@ -84,21 +84,39 @@ npm run start -- init
 
 `init` 会做这些事情：
 
-- 交互选择 provider 和 connector
+- 交互选择 provider 和 connector（均可多选）
 - 自动安装所选扩展到运行时 extension store
-- 优先使用扩展暴露的 `configSchema` 生成配置
+- 写入一份带占位符的 `gateway.json` 模板
+- 为每个所选 connector 生成一个默认 binding 到同一条 route
 - 生成 `gateway.json`
 - 选择 `provider.pi` 且缺少 `models.custom.json` 时，自动创建该文件
 
-说明：当前 `init` 仍只内建 Discord connector。Feishu connector 需要通过 `extension install` + `config edit/configure` 手工启用。
+说明：当前 `init` 内建这些 starter 选择：
 
-4. 运行诊断
+- provider：`provider.pi`、`provider.claude-cli`
+- connector：`connector.discord`、`connector.feishu`
+
+4. 编辑 `gateway.json`
+
+把 `REPLACE_WITH_*` / `YOUR_*` 占位值替换成你的真实配置，例如：
+
+- `connectors.items[*]` 中的 token / appId / appSecret
+- `bindings.items[*].source.id`
+- `routes.items[*].projectRoot`
+
+5. 运行诊断
 
 ```bash
 npm run start -- doctor
 ```
 
-5. 启动网关
+`doctor` 会同时检查：
+
+- 配置结构 / 引用关系
+- 缺失的扩展安装
+- `REPLACE_WITH_*` / `YOUR_*` 这类 init 占位值是否还未替换
+
+6. 启动网关
 
 ```bash
 npm run start --
@@ -154,30 +172,19 @@ cron 配置路径优先级：
 ```bash
 dobby start
 dobby init
-dobby configure
 dobby doctor [--fix]
 ```
 
-配置与拓扑：
+配置检查：
 
 ```bash
 dobby config show [section] [--json]
 dobby config list [section] [--json]
-dobby config edit [--section provider|connector|route|binding]
 dobby config schema list [--json]
 dobby config schema show <contributionId> [--json]
-
-dobby bot list [--json]
-dobby bot set <connectorId> [--name <name>] [--token <token>]
-
-dobby binding list [--connector <id>] [--json]
-dobby binding set <bindingId> --connector <id> --source-type channel|chat --source-id <id> --route <id>
-dobby binding remove <bindingId>
-
-dobby route list [--json]
-dobby route set <routeId> [--project-root <path>] [--tools full|readonly] [--provider <id>] [--sandbox <id>] [--mentions required|optional]
-dobby route remove <routeId> [--cascade-bindings]
 ```
+
+配置变更建议直接编辑 `gateway.json`，再通过 `dobby doctor` 或 `dobby start` 做校验。
 
 扩展管理：
 
@@ -255,7 +262,7 @@ dobby cron remove <jobId>
 `dobby init` 当前只内建这些 starter 选择：
 
 - provider：`provider.pi`、`provider.claude-cli`
-- connector：`connector.discord`
+- connector：`connector.discord`、`connector.feishu`
 
 `provider.claude` 与 sandbox 相关扩展需要手工安装和配置，例如：
 
@@ -372,7 +379,7 @@ npm run plugins:build
 
 - `npm run dev:local` 与 `npm run start:local` 会尝试读取 `.env`
 - 普通 `npm run start -- ...` 不会自动载入 `.env`
-- 配置编辑流优先使用扩展 `configSchema`，无 schema 时退回 JSON 输入
+- `dobby init` 生成的是模板配置；运行前先替换 `gateway.json` 中的 placeholder
 
 ## 相关文档
 

@@ -1,12 +1,10 @@
 import { Command } from "commander";
 import {
-  runConfigEditCommand,
   runConfigListCommand,
   runConfigSchemaListCommand,
   runConfigSchemaShowCommand,
   runConfigShowCommand,
 } from "./commands/config.js";
-import { runConfigureCommand } from "./commands/configure.js";
 import {
   runCronAddCommand,
   runCronListCommand,
@@ -25,16 +23,6 @@ import {
 } from "./commands/extension.js";
 import { runInitCommand } from "./commands/init.js";
 import { runStartCommand } from "./commands/start.js";
-import {
-  runBindingListCommand,
-  runBindingRemoveCommand,
-  runBindingSetCommand,
-  runBotListCommand,
-  runBotSetCommand,
-  runRouteListCommand,
-  runRouteRemoveCommand,
-  runRouteSetCommand,
-} from "./commands/topology.js";
 
 /**
  * Builds the top-level dobby CLI program and registers all subcommands.
@@ -63,146 +51,7 @@ export function buildProgram(): Command {
       await runInitCommand();
     });
 
-  program
-    .command("configure")
-    .description("Interactive configuration wizard")
-    .option(
-      "--section <section>",
-      "Config section (repeatable): provider|connector|route|binding|sandbox|data",
-      (value: string, previous: string[]) => [...previous, value],
-      [] as string[],
-    )
-    .action(async (opts) => {
-      await runConfigureCommand({
-        sections: opts.section as string[],
-      });
-    });
-
-  const botCommand = program.command("bot").description("Manage bot connector settings");
-
-  botCommand
-    .command("list")
-    .description("List configured bot connectors")
-    .option("--json", "Output JSON", false)
-    .action(async (opts) => {
-      await runBotListCommand({
-        json: Boolean(opts.json),
-      });
-    });
-
-  botCommand
-    .command("set")
-    .description("Update one bot connector")
-    .argument("<connectorId>", "Connector instance ID")
-    .option("--name <name>", "Discord botName")
-    .option("--token <token>", "Discord botToken")
-    .action(async (connectorId: string, opts) => {
-      await runBotSetCommand({
-        connectorId,
-        ...(typeof opts.name === "string" ? { name: opts.name as string } : {}),
-        ...(typeof opts.token === "string" ? { token: opts.token as string } : {}),
-      });
-    });
-
-  const bindingCommand = program.command("binding").description("Manage connector source-route bindings");
-
-  bindingCommand
-    .command("list")
-    .description("List bindings")
-    .option("--connector <id>", "Filter by connector instance ID")
-    .option("--json", "Output JSON", false)
-    .action(async (opts) => {
-      await runBindingListCommand({
-        ...(typeof opts.connector === "string" ? { connectorId: opts.connector as string } : {}),
-        json: Boolean(opts.json),
-      });
-    });
-
-  bindingCommand
-    .command("set")
-    .description("Create or update one binding")
-    .argument("<bindingId>", "Binding ID")
-    .requiredOption("--connector <id>", "Connector instance ID")
-    .requiredOption("--source-type <type>", "Source type: channel|chat")
-    .requiredOption("--source-id <id>", "Source ID")
-    .requiredOption("--route <id>", "Route ID")
-    .action(async (bindingId: string, opts) => {
-      if (opts.sourceType !== "channel" && opts.sourceType !== "chat") {
-        throw new Error("--source-type must be channel or chat");
-      }
-
-      await runBindingSetCommand({
-        bindingId,
-        connectorId: opts.connector as string,
-        sourceType: opts.sourceType as "channel" | "chat",
-        sourceId: opts.sourceId as string,
-        routeId: opts.route as string,
-      });
-    });
-
-  bindingCommand
-    .command("remove")
-    .description("Remove one binding")
-    .argument("<bindingId>", "Binding ID")
-    .action(async (bindingId: string) => {
-      await runBindingRemoveCommand({
-        bindingId,
-      });
-    });
-
-  const routeCommand = program.command("route").description("Manage route profiles");
-
-  routeCommand
-    .command("list")
-    .description("List route profiles")
-    .option("--json", "Output JSON", false)
-    .action(async (opts) => {
-      await runRouteListCommand({
-        json: Boolean(opts.json),
-      });
-    });
-
-  routeCommand
-    .command("set")
-    .description("Create or update one route")
-    .argument("<routeId>", "Route ID")
-    .option("--project-root <path>", "Route project root")
-    .option("--tools <profile>", "Route tools profile: full|readonly")
-    .option("--provider <id>", "Provider instance ID")
-    .option("--sandbox <id>", "Sandbox instance ID")
-    .option("--mentions <policy>", "Mention policy: required|optional")
-    .action(async (routeId: string, opts) => {
-      if (
-        typeof opts.mentions === "string"
-        && opts.mentions !== "required"
-        && opts.mentions !== "optional"
-      ) {
-        throw new Error("--mentions must be required or optional");
-      }
-
-      await runRouteSetCommand({
-        routeId,
-        ...(typeof opts.projectRoot === "string" ? { projectRoot: opts.projectRoot as string } : {}),
-        ...(typeof opts.tools === "string" ? { tools: opts.tools as string } : {}),
-        ...(typeof opts.provider === "string" ? { providerId: opts.provider as string } : {}),
-        ...(typeof opts.sandbox === "string" ? { sandboxId: opts.sandbox as string } : {}),
-        ...(typeof opts.mentions === "string" ? { mentions: opts.mentions as "required" | "optional" } : {}),
-      });
-    });
-
-  routeCommand
-    .command("remove")
-    .description("Remove one route")
-    .argument("<routeId>", "Route ID")
-    .option("--cascade-bindings", "Remove bindings that reference this route", false)
-    .action(async (routeId: string, opts) => {
-      await runRouteRemoveCommand({
-        routeId,
-        cascadeBindings: Boolean(opts.cascadeBindings),
-      });
-    });
-
-  const configCommand = program.command("config").description("Inspect and edit config");
+  const configCommand = program.command("config").description("Inspect config");
 
   configCommand
     .command("show")
@@ -225,21 +74,6 @@ export function buildProgram(): Command {
       await runConfigListCommand({
         ...(typeof section === "string" ? { section } : {}),
         json: Boolean(opts.json),
-      });
-    });
-
-  configCommand
-    .command("edit")
-    .description("Interactive edit for high-frequency sections")
-    .option(
-      "--section <section>",
-      "Edit section (repeatable): provider|connector|route|binding",
-      (value: string, previous: string[]) => [...previous, value],
-      [] as string[],
-    )
-    .action(async (opts) => {
-      await runConfigEditCommand({
-        sections: opts.section as string[],
       });
     });
 

@@ -4,6 +4,7 @@ import {
   isCancel,
   multiselect,
   note,
+  password,
   select,
   text,
 } from "@clack/prompts";
@@ -95,11 +96,15 @@ function shouldPromptInMinimalMode(field: FieldPromptDescriptor): boolean {
     return true;
   }
 
-  if (!field.hasDefault && field.existingValue === undefined) {
+  if (field.existingValue !== undefined) {
     return true;
   }
 
   return false;
+}
+
+function isSensitiveStringField(key: string): boolean {
+  return /(token|secret|api[-_]?key)$/i.test(key);
 }
 
 async function promptNumberField(params: {
@@ -304,6 +309,30 @@ async function promptFieldValue(params: {
       expected: "object",
       existingValue,
     });
+  }
+
+  if (isSensitiveStringField(key)) {
+    while (true) {
+      const result = await password({
+        message,
+        mask: "*",
+      });
+      if (isCancel(result)) {
+        cancel("Configuration cancelled.");
+        throw new Error("Configuration cancelled.");
+      }
+
+      const raw = String(result ?? "").trim();
+      if (raw.length === 0) {
+        if (required && existingValue === undefined) {
+          await note("This field is required.", "Validation");
+          continue;
+        }
+        return existingValue;
+      }
+
+      return raw;
+    }
   }
 
   while (true) {

@@ -1,15 +1,11 @@
 import {
   cancel,
-  confirm,
   intro,
   isCancel,
   multiselect,
-  note,
   outro,
-  password,
   select,
   spinner,
-  text,
 } from "@clack/prompts";
 import { ExtensionStoreManager } from "../../extension/manager.js";
 import {
@@ -20,8 +16,7 @@ import {
   upsertProviderInstance,
   upsertRoute,
 } from "../shared/config-mutators.js";
-import { DEFAULT_DISCORD_BOT_NAME } from "../shared/discord-config.js";
-import { applyAndValidateContributionSchemas, loadContributionSchemaCatalog } from "../shared/config-schema.js";
+import { applyAndValidateContributionSchemas } from "../shared/config-schema.js";
 import {
   readRawConfig,
   resolveConfigPath,
@@ -39,51 +34,15 @@ import {
 } from "../shared/init-catalog.js";
 import { ensureProviderPiModelsFile } from "../shared/init-models-file.js";
 import { createLogger } from "../shared/runtime.js";
-import { promptConfigFromSchema } from "../shared/schema-prompts.js";
 
 interface InitInput {
   providerChoiceIds: InitProviderChoiceId[];
   routeProviderChoiceId: InitProviderChoiceId;
-  connectorChoiceId: InitConnectorChoiceId;
-  projectRoot: string;
-  channelId: string;
-  routeId: string;
-  botName: string;
-  botToken: string;
-  allowAllMessages: boolean;
+  connectorChoiceIds: InitConnectorChoiceId[];
 }
 
 /**
- * Repeatedly prompts for non-empty text input and aborts cleanly on cancel.
- */
-async function promptRequiredText(params: {
-  message: string;
-  placeholder?: string;
-  initialValue?: string;
-}): Promise<string> {
-  while (true) {
-    const promptOptions = {
-      message: params.message,
-      ...(params.placeholder !== undefined ? { placeholder: params.placeholder } : {}),
-      ...(params.initialValue !== undefined ? { initialValue: params.initialValue } : {}),
-    };
-    const result = await text(promptOptions);
-    if (isCancel(result)) {
-      cancel("Initialization cancelled.");
-      throw new Error("Initialization cancelled.");
-    }
-
-    const value = String(result ?? "").trim();
-    if (value.length > 0) {
-      return value;
-    }
-
-    await note("This field is required.", "Validation");
-  }
-}
-
-/**
- * Collects init inputs from interactive prompts.
+ * Collects high-level starter choices only; config values are written as templates.
  */
 async function collectInitInput(): Promise<InitInput> {
   intro("dobby init");
@@ -102,6 +61,7 @@ async function collectInitInput(): Promise<InitInput> {
     cancel("Initialization cancelled.");
     throw new Error("Initialization cancelled.");
   }
+
   const providerChoiceIds = (providerChoiceResult as unknown[]).map((value) => String(value));
   if (providerChoiceIds.length === 0) {
     throw new Error("At least one provider must be selected");
@@ -110,12 +70,12 @@ async function collectInitInput(): Promise<InitInput> {
     const invalidChoice = providerChoiceIds.find((providerChoiceId) => !isInitProviderChoiceId(providerChoiceId));
     throw new Error(`Unsupported provider choice '${invalidChoice}'`);
   }
-  const providerChoicesById = new Map(providerChoices.map((choice) => [choice.id, choice]));
 
+  const providerChoicesById = new Map(providerChoices.map((choice) => [choice.id, choice]));
   let routeProviderChoiceId = providerChoiceIds[0] as InitProviderChoiceId;
   if (providerChoiceIds.length > 1) {
     const routeProviderChoiceResult = await select({
-      message: "Choose provider for the default route",
+      message: "Choose default provider",
       options: providerChoiceIds.map((providerChoiceId) => ({
         value: providerChoiceId,
         label: providerChoicesById.get(providerChoiceId as InitProviderChoiceId)?.label ?? providerChoiceId,
@@ -135,108 +95,54 @@ async function collectInitInput(): Promise<InitInput> {
   }
 
   const connectorChoices = listInitConnectorChoices();
-  const connectorChoiceResult = await select({
-    message: "Choose connector",
+  const connectorChoiceResult = await multiselect({
+    message: "Choose connector(s) (space to select multiple)",
     options: connectorChoices.map((item) => ({
       value: item.id,
       label: item.label,
     })),
-    initialValue: "connector.discord",
+    initialValues: ["connector.discord"],
+    required: true,
   });
   if (isCancel(connectorChoiceResult)) {
     cancel("Initialization cancelled.");
     throw new Error("Initialization cancelled.");
   }
-  const connectorChoiceId = String(connectorChoiceResult);
-  if (!isInitConnectorChoiceId(connectorChoiceId)) {
-    throw new Error(`Unsupported connector choice '${connectorChoiceId}'`);
+
+  const connectorChoiceIds = (connectorChoiceResult as unknown[]).map((value) => String(value));
+  if (connectorChoiceIds.length === 0) {
+    throw new Error("At least one connector must be selected");
   }
-
-  const projectRoot = await promptRequiredText({
-    message: "Project root",
-    initialValue: process.cwd(),
-  });
-
-  const channelId = await promptRequiredText({
-    message: "Discord channel ID",
-    placeholder: "1234567890",
-  });
-
-  const routeIdResult = await text({
-    message: "Route ID",
-    initialValue: "main",
-  });
-  if (isCancel(routeIdResult)) {
-    cancel("Initialization cancelled.");
-    throw new Error("Initialization cancelled.");
-  }
-
-  const botNameResult = await text({
-    message: "Discord bot name",
-    initialValue: DEFAULT_DISCORD_BOT_NAME,
-  });
-  if (isCancel(botNameResult)) {
-    cancel("Initialization cancelled.");
-    throw new Error("Initialization cancelled.");
-  }
-
-  const botTokenResult = await password({
-    message: "Discord bot token",
-    mask: "*",
-    validate: (value) => (value.trim().length > 0 ? undefined : "Token is required"),
-  });
-  if (isCancel(botTokenResult)) {
-    cancel("Initialization cancelled.");
-    throw new Error("Initialization cancelled.");
-  }
-
-  const allowAllMessagesResult = await confirm({
-    message: "Allow all group messages (not mention-only)?",
-    initialValue: false,
-  });
-  if (isCancel(allowAllMessagesResult)) {
-    cancel("Initialization cancelled.");
-    throw new Error("Initialization cancelled.");
+  if (!connectorChoiceIds.every((connectorChoiceId) => isInitConnectorChoiceId(connectorChoiceId))) {
+    const invalidChoice = connectorChoiceIds.find((connectorChoiceId) => !isInitConnectorChoiceId(connectorChoiceId));
+    throw new Error(`Unsupported connector choice '${invalidChoice}'`);
   }
 
   return {
     providerChoiceIds: providerChoiceIds as InitProviderChoiceId[],
     routeProviderChoiceId,
-    connectorChoiceId,
-    projectRoot,
-    channelId,
-    routeId: String(routeIdResult ?? "").trim() || "main",
-    botName: String(botNameResult ?? "").trim() || DEFAULT_DISCORD_BOT_NAME,
-    botToken: String(botTokenResult ?? "").trim(),
-    allowAllMessages: allowAllMessagesResult === true,
+    connectorChoiceIds: connectorChoiceIds as InitConnectorChoiceId[],
   };
 }
 
 /**
- * Executes first-time initialization: install required extensions, write config, then validate.
+ * Executes first-time initialization by installing starter extensions and writing template config.
  */
 export async function runInitCommand(): Promise<void> {
   const configPath = resolveConfigPath();
   const existingConfig = await readRawConfig(configPath);
   if (existingConfig) {
     throw new Error(
-      `Config '${configPath}' already exists. Use 'dobby config edit' or 'dobby configure' to update existing values.`,
+      `Config '${configPath}' already exists. Edit the file directly to update existing values.`,
     );
   }
 
   const input = await collectInitInput();
-  const selected = createInitSelectionConfig(input.providerChoiceIds, input.connectorChoiceId, {
-    routeId: input.routeId,
-    projectRoot: input.projectRoot,
-    allowAllMessages: input.allowAllMessages,
-    botName: input.botName,
-    botToken: input.botToken,
-    channelId: input.channelId,
+  const selected = createInitSelectionConfig(input.providerChoiceIds, input.connectorChoiceIds, {
     routeProviderChoiceId: input.routeProviderChoiceId,
   });
 
   const next = ensureGatewayConfigShape({});
-
   const rootDir = resolveDataRootDir(configPath, next);
   const manager = new ExtensionStoreManager(createLogger(), `${rootDir}/extensions`);
 
@@ -253,79 +159,13 @@ export async function runInitCommand(): Promise<void> {
     throw error;
   }
 
-  const catalog = await loadContributionSchemaCatalog(configPath, next);
-  const schemaByContributionId = new Map(
-    catalog
-      .filter((item) => item.configSchema)
-      .map((item) => [item.contributionId, item.configSchema!] as const),
-  );
-  const schemaStateByContributionId = new Map(
-    catalog.map((item) => [item.contributionId, item.configSchema ? "with_schema" : "without_schema"] as const),
-  );
-  const warnedSchemaFallback = new Set<string>();
-  const noteSchemaFallback = async (contributionId: string): Promise<"without_schema" | "not_loaded"> => {
-    if (warnedSchemaFallback.has(contributionId)) {
-      const existingState = schemaStateByContributionId.get(contributionId);
-      return existingState === "without_schema" ? "without_schema" : "not_loaded";
-    }
-    warnedSchemaFallback.add(contributionId);
-
-    const state = schemaStateByContributionId.get(contributionId);
-    if (state === "without_schema") {
-      await note(
-        `Contribution '${contributionId}' is loaded but does not expose configSchema. Falling back to built-in defaults/JSON.`,
-        "Schema",
-      );
-      return "without_schema";
-    }
-
-    await note(
-      `No loaded schema for contribution '${contributionId}'. The extension may be disabled or not installed.`,
-      "Schema",
-    );
-    return "not_loaded";
-  };
-
-  const resolveFallbackConfig = async (
-    kind: "provider" | "connector",
-    instanceId: string,
-    contributionId: string,
-    fallbackConfig: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> => {
-    const state = await noteSchemaFallback(contributionId);
-    if (state === "not_loaded") {
-      throw new Error(
-        `Cannot initialize ${kind} '${instanceId}' because schema for contribution '${contributionId}' is not loaded. ` +
-        `Ensure the extension is installed and enabled, then retry.`,
-      );
-    }
-    return fallbackConfig;
-  };
-
   for (const provider of selected.providerInstances) {
-    const schema = schemaByContributionId.get(provider.contributionId);
-    const providerConfig = schema
-      ? await promptConfigFromSchema(schema, provider.config, {
-        title: `Provider '${provider.instanceId}' (${provider.contributionId})`,
-      })
-      : await resolveFallbackConfig("provider", provider.instanceId, provider.contributionId, provider.config);
-    upsertProviderInstance(next, provider.instanceId, provider.contributionId, providerConfig);
+    upsertProviderInstance(next, provider.instanceId, provider.contributionId, provider.config);
   }
 
-  const connectorSchema = schemaByContributionId.get(selected.connectorContributionId);
-  const connectorConfig = selected.connectorContributionId === "connector.discord"
-    ? selected.connectorConfig
-    : connectorSchema
-      ? await promptConfigFromSchema(connectorSchema, selected.connectorConfig, {
-        title: `Connector '${selected.connectorInstanceId}' (${selected.connectorContributionId})`,
-      })
-      : await resolveFallbackConfig(
-        "connector",
-        selected.connectorInstanceId,
-        selected.connectorContributionId,
-        selected.connectorConfig,
-      );
-  upsertConnectorInstance(next, selected.connectorInstanceId, selected.connectorContributionId, connectorConfig);
+  for (const connector of selected.connectorInstances) {
+    upsertConnectorInstance(next, connector.instanceId, connector.contributionId, connector.config);
+  }
 
   next.providers = {
     ...next.providers,
@@ -337,14 +177,16 @@ export async function runInitCommand(): Promise<void> {
     defaults: {
       ...next.routes.defaults,
       provider: selected.providerInstanceId,
+      sandbox: "host.builtin",
+      tools: "full",
+      mentions: "required",
     },
   };
 
-  upsertRoute(next, input.routeId, {
-    ...selected.routeProfile,
-    projectRoot: input.projectRoot,
-  });
-  upsertBinding(next, selected.bindingId, selected.bindingConfig);
+  upsertRoute(next, selected.routeId, selected.routeProfile);
+  for (const binding of selected.bindings) {
+    upsertBinding(next, binding.id, binding.config);
+  }
 
   const validatedConfig = await applyAndValidateContributionSchemas(configPath, next);
 
@@ -356,7 +198,10 @@ export async function runInitCommand(): Promise<void> {
 
     const resolvedProvider = validatedConfig.providers?.items?.[provider.instanceId];
     const { type: _type, ...providerConfig } = resolvedProvider ?? {};
-    const ensured = await ensureProviderPiModelsFile(configPath, Object.keys(providerConfig).length > 0 ? providerConfig : provider.config);
+    const ensured = await ensureProviderPiModelsFile(
+      configPath,
+      Object.keys(providerConfig).length > 0 ? providerConfig : provider.config,
+    );
     if (ensured.created) {
       createdModelsFiles.push(ensured.path);
     }
@@ -377,20 +222,7 @@ export async function runInitCommand(): Promise<void> {
     }
   }
   console.log("Next steps:");
-  console.log("1. dobby start");
-
-  const showHint = await confirm({
-    message: "Show quick validation commands?",
-    initialValue: true,
-  });
-
-  if (!isCancel(showHint) && showHint) {
-    await note(
-      [
-        "dobby extension list",
-        "dobby doctor",
-      ].join("\n"),
-      "Validation",
-    );
-  }
+  console.log("1. Edit gateway.json and replace all REPLACE_WITH_* / YOUR_* placeholders");
+  console.log("2. Run 'dobby doctor' to validate the edited config");
+  console.log("3. Run 'dobby start' when the placeholders are replaced");
 }

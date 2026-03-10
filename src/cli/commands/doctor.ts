@@ -16,6 +16,18 @@ interface DoctorIssue {
   message: string;
 }
 
+function isPlaceholderValue(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().toUpperCase();
+  return normalized.includes("REPLACE_WITH_") || normalized.includes("YOUR_");
+}
+
+function isCredentialLikeKey(key: string): boolean {
+  return /(?:token|secret|api[-_]?key|appid|appsecret)/i.test(key);
+}
+
 function expandHome(value: string): string {
   if (value === "~") {
     return homedir();
@@ -112,6 +124,17 @@ export async function runDoctorCommand(options: {
       });
     }
 
+    for (const [key, value] of Object.entries(instance)) {
+      if (key === "type" || !isPlaceholderValue(value)) {
+        continue;
+      }
+
+      issues.push({
+        level: isCredentialLikeKey(key) ? "error" : "warning",
+        message: `connectors.items['${instanceId}'].${key} still uses placeholder value '${value}'`,
+      });
+    }
+
     if (instance.type === DISCORD_CONNECTOR_CONTRIBUTION_ID) {
       const botName = typeof instance.botName === "string" ? instance.botName.trim() : "";
       const botToken = typeof instance.botToken === "string" ? instance.botToken.trim() : "";
@@ -140,6 +163,14 @@ export async function runDoctorCommand(options: {
   }
 
   for (const [routeId, route] of Object.entries(normalized.routes.items)) {
+    if (isPlaceholderValue(route.projectRoot)) {
+      issues.push({
+        level: "warning",
+        message: `routes.items['${routeId}'].projectRoot still uses placeholder value '${route.projectRoot}'`,
+      });
+      continue;
+    }
+
     try {
       const projectRootPath = resolveRouteProjectRoot(configPath, route.projectRoot);
       await access(projectRootPath);
@@ -163,6 +194,13 @@ export async function runDoctorCommand(options: {
       issues.push({
         level: "error",
         message: `bindings.items['${bindingId}'].route references unknown route '${binding.route}'`,
+      });
+    }
+
+    if (isPlaceholderValue(binding.source.id)) {
+      issues.push({
+        level: "warning",
+        message: `bindings.items['${bindingId}'].source.id still uses placeholder value '${binding.source.id}'`,
       });
     }
 

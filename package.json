@@ -1,5 +1,5 @@
 {
-  "name": "dobby",
+  "name": "@dobby.ai/dobby",
   "version": "0.1.0",
   "private": false,
   "type": "module",

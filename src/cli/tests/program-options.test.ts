@@ -38,7 +38,7 @@ test("init help has no merge/overwrite flags", () => {
   assert.equal(help.includes("--config"), false);
 });
 
-test("config help shows show/list/edit and schema", () => {
+test("config help shows read-only inspect commands and schema", () => {
   const program = buildProgram();
   const configCommand = program.commands.find((command) => command.name() === "config");
   assert.ok(configCommand);
@@ -46,8 +46,8 @@ test("config help shows show/list/edit and schema", () => {
   const help = configCommand.helpInformation();
   assert.match(help, /show \[options\] \[section\]/);
   assert.match(help, /list \[options\] \[section\]/);
-  assert.match(help, /edit \[options\]/);
   assert.match(help, /schema/);
+  assert.equal(help.includes("edit"), false);
 
   assert.equal(help.includes("get"), false);
   assert.equal(help.includes("set"), false);
@@ -79,35 +79,17 @@ test("cron help shows core subcommands", () => {
   assert.match(help, /remove \[options\] <jobId>/);
 });
 
-test("binding help shows list, set, and remove subcommands", () => {
+test("top-level help keeps bootstrap, inspect, install, validate, and ops commands only", () => {
   const program = buildProgram();
-  const bindingCommand = program.commands.find((command) => command.name() === "binding");
-  assert.ok(bindingCommand);
-
-  const help = bindingCommand.helpInformation();
-  assert.match(help, /list \[options\]/);
-  assert.match(help, /set \[options\] <bindingId>/);
-  assert.match(help, /remove <bindingId>/);
-});
-
-test("route help reflects provider, sandbox, mentions, and cascade-bindings options", () => {
-  const program = buildProgram();
-  const routeCommand = program.commands.find((command) => command.name() === "route");
-  assert.ok(routeCommand);
-
-  const setCommand = routeCommand.commands.find((command) => command.name() === "set");
-  const removeCommand = routeCommand.commands.find((command) => command.name() === "remove");
-  assert.ok(setCommand);
-  assert.ok(removeCommand);
-
-  const setHelp = setCommand.helpInformation();
-  const removeHelp = removeCommand.helpInformation();
-  assert.match(setHelp, /--provider <id>/);
-  assert.match(setHelp, /--sandbox <id>/);
-  assert.match(setHelp, /--mentions <policy>/);
-  assert.equal(setHelp.includes("--provider-id"), false);
-  assert.equal(setHelp.includes("--sandbox-id"), false);
-  assert.equal(setHelp.includes("--mentions-only"), false);
-  assert.equal(setHelp.includes("--default"), false);
-  assert.match(removeHelp, /--cascade-bindings/);
+  const help = program.helpInformation();
+  assert.match(help, /start/);
+  assert.match(help, /init/);
+  assert.match(help, /config/);
+  assert.match(help, /extension/);
+  assert.match(help, /doctor/);
+  assert.match(help, /cron/);
+  assert.equal(help.includes("configure"), false);
+  assert.equal(help.includes("bot"), false);
+  assert.equal(help.includes("binding"), false);
+  assert.equal(help.includes("route"), false);
 });

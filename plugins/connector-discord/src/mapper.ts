@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Message } from "discord.js";
 import type { GatewayLogger, InboundAttachment, InboundEnvelope } from "@dobby.ai/plugin-sdk";
 
@@ -19,6 +19,7 @@ async function downloadAttachment(url: string, targetPath: string): Promise<void
   }
 
   const data = await response.arrayBuffer();
+  await mkdir(dirname(targetPath), { recursive: true });
   await writeFile(targetPath, Buffer.from(data));
 }
 
@@ -56,13 +57,11 @@ export async function mapDiscordMessage(
 
   const cleanedText = stripBotMention(message.content ?? "", botUserId);
 
-  const attachmentDir = join(attachmentsRoot, sourceId, message.id);
-  await mkdir(attachmentDir, { recursive: true });
-
   const attachments: InboundAttachment[] = [];
 
   for (const attachment of message.attachments.values()) {
     const base = mapAttachmentBase(attachment);
+    const attachmentDir = join(attachmentsRoot, sourceId, message.id);
     const fileName = sanitizeFileName(attachment.name ?? attachment.id);
     const localPath = join(attachmentDir, fileName);
 
