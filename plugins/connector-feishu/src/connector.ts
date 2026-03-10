@@ -36,6 +36,7 @@ function textContent(text: string): string {
 
 function cardContent(text: string, title: string): string {
   return JSON.stringify({
+    schema: "2.0",
     config: {
       wide_screen_mode: true,
       update_multi: true,
@@ -47,12 +48,16 @@ function cardContent(text: string, title: string): string {
         content: title,
       },
     },
-    elements: [
-      {
-        tag: "markdown",
-        content: text.trim().length > 0 ? text : "(empty response)",
-      },
-    ],
+    body: {
+      direction: "vertical",
+      padding: "12px 12px 12px 12px",
+      elements: [
+        {
+          tag: "markdown",
+          content: text.trim().length > 0 ? text : "(empty response)",
+        },
+      ],
+    },
   });
 }
 
