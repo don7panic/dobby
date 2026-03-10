@@ -1,0 +1,38 @@
+{
+  "name": "@dobby.ai/connector-feishu",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Built-in Feishu connector extension package",
+  "main": "./index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@dobby.ai/plugin-sdk": "^0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@dobby.ai/plugin-sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@dobby.ai/plugin-sdk": "file:../plugin-sdk",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.9.2"
+  },
+  "files": [
+    "index.js",
+    "dist/",
+    "dobby.manifest.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

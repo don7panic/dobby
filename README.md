@@ -5,6 +5,7 @@ Discord-first 本地 Agent Gateway。宿主只负责 CLI、网关主流程、扩
 当前仓库内维护的扩展包：
 
 - `@dobby.ai/connector-discord`
+- `@dobby.ai/connector-feishu`
 - `@dobby.ai/provider-pi`
 - `@dobby.ai/provider-claude-cli`
 - `@dobby.ai/provider-claude`
@@ -15,6 +16,8 @@ Discord-first 本地 Agent Gateway。宿主只负责 CLI、网关主流程、扩
 ## 核心能力
 
 - Discord 映射频道 / 线程 -> route -> provider / sandbox
+- Feishu 长连接消息接入（self-built app，手工安装/配置）
+- Feishu 出站支持普通文本和 Markdown 卡片；默认群内直发，不走 reply thread
 - conversation 级 runtime 复用与串行化
 - 扩展 store 安装、启用、列举与 schema 驱动配置
 - Discord 流式回复、typing、附件下载与图片输入
@@ -85,6 +88,8 @@ npm run start -- init
 - 优先使用扩展暴露的 `configSchema` 生成配置
 - 生成 `gateway.json`
 - 选择 `provider.pi` 且缺少 `models.custom.json` 时，自动创建该文件
+
+说明：当前 `init` 仍只内建 Discord connector。Feishu connector 需要通过 `extension install` + `config edit/configure` 手工启用。
 
 4. 运行诊断
 

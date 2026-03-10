@@ -10,6 +10,10 @@
         "enabled": true
       },
       {
+        "package": "@dobby.ai/connector-feishu",
+        "enabled": false
+      },
+      {
         "package": "@dobby.ai/provider-claude-cli",
         "enabled": false
       }
@@ -64,6 +68,26 @@
     }
   },
   "_examples": {
+    "connectors": {
+      "instances": {
+        "feishu.main": {
+          "contributionId": "connector.feishu",
+          "config": {
+            "appId": "cli_xxx",
+            "appSecret": "REPLACE_WITH_FEISHU_APP_SECRET",
+            "domain": "feishu",
+            "botName": "dobby-feishu",
+            "messageFormat": "card_markdown",
+            "replyMode": "direct",
+            "cardTitle": "Dobby",
+            "chatRouteMap": {
+              "oc_xxx": "projectA"
+            },
+            "downloadAttachments": true
+          }
+        }
+      }
+    },
     "providers": {
       "instances": {
         "claude-cli.main": {

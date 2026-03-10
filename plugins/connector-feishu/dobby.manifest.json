@@ -1,0 +1,18 @@
+{
+  "apiVersion": "1.0",
+  "name": "@dobby.ai/connector-feishu",
+  "version": "0.1.0",
+  "contributions": [
+    {
+      "id": "connector.feishu",
+      "kind": "connector",
+      "entry": "./dist/contribution.js",
+      "capabilities": {
+        "updateStrategy": "edit",
+        "supportsThread": true,
+        "supportsTyping": false,
+        "supportsFileUpload": false
+      }
+    }
+  ]
+}
