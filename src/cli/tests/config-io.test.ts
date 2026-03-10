@@ -21,8 +21,8 @@ test("resolveConfigPath detects local dobby repository config path", async () =>
   await mkdir(resolve(repoRoot, "scripts"), { recursive: true });
   await mkdir(resolve(repoRoot, "src", "cli"), { recursive: true });
 
-  await writeFile(resolve(repoRoot, "package.json"), JSON.stringify({ name: "dobby" }), "utf-8");
-  await writeFile(resolve(repoRoot, "config", "gateway.json"), "{}", "utf-8");
+  await writeFile(resolve(repoRoot, "package.json"), JSON.stringify({ name: "@dobby.ai/dobby" }), "utf-8");
+  await writeFile(resolve(repoRoot, "config", "gateway.example.json"), "{}\n", "utf-8");
   await writeFile(resolve(repoRoot, "scripts", "local-extensions.mjs"), "#!/usr/bin/env node\n", "utf-8");
 
   assert.equal(
@@ -38,8 +38,8 @@ test("resolveConfigPath prioritizes DOBBY_CONFIG_PATH over repository detection"
   const repoRoot = await mkdtemp(resolve(tmpdir(), "dobby-config-path-env-priority-"));
   await mkdir(resolve(repoRoot, "config"), { recursive: true });
   await mkdir(resolve(repoRoot, "scripts"), { recursive: true });
-  await writeFile(resolve(repoRoot, "package.json"), JSON.stringify({ name: "dobby" }), "utf-8");
-  await writeFile(resolve(repoRoot, "config", "gateway.json"), "{}", "utf-8");
+  await writeFile(resolve(repoRoot, "package.json"), JSON.stringify({ name: "@dobby.ai/dobby" }), "utf-8");
+  await writeFile(resolve(repoRoot, "config", "gateway.example.json"), "{}\n", "utf-8");
   await writeFile(resolve(repoRoot, "scripts", "local-extensions.mjs"), "#!/usr/bin/env node\n", "utf-8");
 
   const customPath = resolve(tmpdir(), "dobby-custom-gateway.json");
@@ -77,7 +77,7 @@ test("resolveDataRootDir uses repo root for repo-local config/gateway.json", asy
   await mkdir(resolve(repoRoot, "config"), { recursive: true });
   await mkdir(resolve(repoRoot, "scripts"), { recursive: true });
 
-  await writeFile(resolve(repoRoot, "package.json"), JSON.stringify({ name: "dobby" }), "utf-8");
+  await writeFile(resolve(repoRoot, "package.json"), JSON.stringify({ name: "@dobby.ai/dobby" }), "utf-8");
   await writeFile(resolve(repoRoot, "config", "gateway.json"), "{}", "utf-8");
   await writeFile(resolve(repoRoot, "scripts", "local-extensions.mjs"), "#!/usr/bin/env node\n", "utf-8");
 

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { loadGatewayConfig } from "../../core/routing.js";
+import { BindingResolver, loadGatewayConfig } from "../../core/routing.js";
 
 async function writeTempConfig(payload: unknown): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "dobby-routing-"));
@@ -17,7 +17,7 @@ async function writeRepoTempConfig(payload: unknown): Promise<{ repoRoot: string
   const configDir = join(repoRoot, "config");
   await mkdir(configDir, { recursive: true });
   await mkdir(join(repoRoot, "scripts"), { recursive: true });
-  await writeFile(join(repoRoot, "package.json"), JSON.stringify({ name: "dobby" }), "utf-8");
+  await writeFile(join(repoRoot, "package.json"), JSON.stringify({ name: "@dobby.ai/dobby" }), "utf-8");
   await writeFile(join(repoRoot, "scripts", "local-extensions.mjs"), "#!/usr/bin/env node\n", "utf-8");
 
   const configPath = join(configDir, "gateway.json");
@@ -131,6 +131,78 @@ test("loadGatewayConfig resolves data.rootDir from repo root for repo-local conf
     assert.equal(mainRoute.projectRoot, join(repoRoot, "workspace/project-a"));
   } finally {
     await rm(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("loadGatewayConfig applies routes.defaults.projectRoot and bindings.default for direct messages", async () => {
+  const payload = validConfig();
+  payload.routes = {
+    defaults: {
+      projectRoot: "./workspace/default-root",
+      provider: "pi.main",
+      sandbox: "host.builtin",
+      tools: "full",
+      mentions: "required",
+    },
+    items: {
+      main: {},
+    },
+  };
+  payload.bindings = {
+    default: {
+      route: "main",
+    },
+    items: {},
+  };
+
+  const configPath = await writeTempConfig(payload);
+
+  try {
+    const loaded = await loadGatewayConfig(configPath);
+    const configDir = dirname(configPath);
+    const resolver = new BindingResolver(loaded.bindings);
+
+    assert.deepEqual(loaded.routes.defaults, {
+      projectRoot: join(configDir, "workspace/default-root"),
+      provider: "pi.main",
+      sandbox: "host.builtin",
+      tools: "full",
+      mentions: "required",
+    });
+    assert.deepEqual(loaded.routes.items.main, {
+      projectRoot: join(configDir, "workspace/default-root"),
+      provider: "pi.main",
+      sandbox: "host.builtin",
+      tools: "full",
+      mentions: "required",
+    });
+    assert.deepEqual(loaded.bindings.default, {
+      route: "main",
+    });
+    assert.equal(
+      resolver.resolve(
+        "discord.main",
+        {
+          type: "channel",
+          id: "dm-123",
+        },
+        { isDirectMessage: true },
+      )?.config.route,
+      "main",
+    );
+    assert.equal(
+      resolver.resolve(
+        "discord.main",
+        {
+          type: "channel",
+          id: "dm-123",
+        },
+        { isDirectMessage: false },
+      ),
+      null,
+    );
+  } finally {
+    await rm(dirname(configPath), { recursive: true, force: true });
   }
 });
 

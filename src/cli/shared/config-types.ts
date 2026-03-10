@@ -9,6 +9,7 @@ export interface RawExtensionItemConfig {
 }
 
 export interface RawRouteDefaults {
+  projectRoot?: string;
   provider?: string;
   sandbox?: string;
   tools?: "full" | "readonly";
@@ -17,12 +18,17 @@ export interface RawRouteDefaults {
 }
 
 export interface RawRouteProfile {
-  projectRoot: string;
+  projectRoot?: string;
   tools?: "full" | "readonly";
   systemPromptFile?: string;
   mentions?: "required" | "optional";
   provider?: string;
   sandbox?: string;
+  [key: string]: unknown;
+}
+
+export interface RawDefaultBindingConfig {
+  route: string;
   [key: string]: unknown;
 }
 
@@ -62,6 +68,7 @@ export interface RawGatewayConfig {
     [key: string]: unknown;
   };
   bindings?: {
+    default?: RawDefaultBindingConfig;
     items?: Record<string, RawBindingConfig>;
     [key: string]: unknown;
   };
@@ -98,6 +105,7 @@ export interface NormalizedGatewayConfig extends RawGatewayConfig {
     [key: string]: unknown;
   };
   bindings: {
+    default?: RawDefaultBindingConfig;
     items: Record<string, RawBindingConfig>;
     [key: string]: unknown;
   };

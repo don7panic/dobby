@@ -16,6 +16,11 @@ interface DoctorIssue {
   message: string;
 }
 
+interface PlaceholderHit {
+  path: string;
+  value: string;
+}
+
 function isPlaceholderValue(value: unknown): value is string {
   if (typeof value !== "string") {
     return false;
@@ -26,6 +31,28 @@ function isPlaceholderValue(value: unknown): value is string {
 
 function isCredentialLikeKey(key: string): boolean {
   return /(?:token|secret|api[-_]?key|appid|appsecret)/i.test(key);
+}
+
+function walkPlaceholders(value: unknown, path: string): PlaceholderHit[] {
+  if (isPlaceholderValue(value)) {
+    return [{ path, value }];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => walkPlaceholders(item, `${path}[${index}]`));
+  }
+
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  return Object.entries(value).flatMap(([key, nested]) => walkPlaceholders(nested, `${path}.${key}`));
+}
+
+function lastPathSegment(path: string): string {
+  const withoutIndexes = path.replaceAll(/\[\d+\]/g, "");
+  const segments = withoutIndexes.split(".");
+  return segments[segments.length - 1] ?? withoutIndexes;
 }
 
 function expandHome(value: string): string {
@@ -114,6 +141,17 @@ export async function runDoctorCommand(options: {
         message: `providers.items['${instanceId}'] references missing contribution '${instance.type}'`,
       });
     }
+
+    for (const hit of walkPlaceholders(instance, `providers.items['${instanceId}']`)) {
+      if (hit.path.endsWith(".type")) {
+        continue;
+      }
+
+      issues.push({
+        level: isCredentialLikeKey(lastPathSegment(hit.path)) ? "error" : "warning",
+        message: `${hit.path} still uses placeholder value '${hit.value}'`,
+      });
+    }
   }
 
   for (const [instanceId, instance] of Object.entries(normalized.connectors.items)) {
@@ -124,14 +162,14 @@ export async function runDoctorCommand(options: {
       });
     }
 
-    for (const [key, value] of Object.entries(instance)) {
-      if (key === "type" || !isPlaceholderValue(value)) {
+    for (const hit of walkPlaceholders(instance, `connectors.items['${instanceId}']`)) {
+      if (hit.path.endsWith(".type")) {
         continue;
       }
 
       issues.push({
-        level: isCredentialLikeKey(key) ? "error" : "warning",
-        message: `connectors.items['${instanceId}'].${key} still uses placeholder value '${value}'`,
+        level: isCredentialLikeKey(lastPathSegment(hit.path)) ? "error" : "warning",
+        message: `${hit.path} still uses placeholder value '${hit.value}'`,
       });
     }
 
@@ -162,24 +200,49 @@ export async function runDoctorCommand(options: {
     }
   }
 
+  if (normalized.routes.defaults.projectRoot && isPlaceholderValue(normalized.routes.defaults.projectRoot)) {
+    issues.push({
+      level: "warning",
+      message: `routes.defaults.projectRoot still uses placeholder value '${normalized.routes.defaults.projectRoot}'`,
+    });
+  }
+
   for (const [routeId, route] of Object.entries(normalized.routes.items)) {
-    if (isPlaceholderValue(route.projectRoot)) {
+    const effectiveProjectRoot = route.projectRoot ?? normalized.routes.defaults.projectRoot;
+    const projectRootSource = route.projectRoot ? `routes.items['${routeId}'].projectRoot` : "routes.defaults.projectRoot";
+
+    if (!effectiveProjectRoot) {
+      issues.push({
+        level: "error",
+        message: `routes.items['${routeId}'].projectRoot is required when routes.defaults.projectRoot is not set`,
+      });
+      continue;
+    }
+
+    if (isPlaceholderValue(effectiveProjectRoot)) {
       issues.push({
         level: "warning",
-        message: `routes.items['${routeId}'].projectRoot still uses placeholder value '${route.projectRoot}'`,
+        message: `${projectRootSource} still uses placeholder value '${effectiveProjectRoot}'`,
       });
       continue;
     }
 
     try {
-      const projectRootPath = resolveRouteProjectRoot(configPath, route.projectRoot);
+      const projectRootPath = resolveRouteProjectRoot(configPath, effectiveProjectRoot);
       await access(projectRootPath);
     } catch {
       issues.push({
         level: "warning",
-        message: `routes.items['${routeId}'].projectRoot does not exist: ${route.projectRoot}`,
+        message: `${projectRootSource} does not exist: ${effectiveProjectRoot}`,
       });
     }
+  }
+
+  if (normalized.bindings.default && !normalized.routes.items[normalized.bindings.default.route]) {
+    issues.push({
+      level: "error",
+      message: `bindings.default.route references unknown route '${normalized.bindings.default.route}'`,
+    });
   }
 
   const seenBindingSources = new Map<string, string>();

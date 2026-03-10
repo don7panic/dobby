@@ -229,7 +229,9 @@ export class Gateway {
       };
     }
 
-    const binding = this.options.bindingResolver.resolve(message.connectorId, message.source);
+    const binding = this.options.bindingResolver.resolve(message.connectorId, message.source, {
+      isDirectMessage: message.isDirectMessage,
+    });
     if (!binding) {
       if (handling.origin === "connector") {
         this.options.logger.debug(

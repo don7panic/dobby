@@ -119,6 +119,65 @@ test("doctor reports invalid binding route references", async () => {
   }
 });
 
+test("doctor reports invalid default binding route references", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "dobby-doctor-default-binding-"));
+
+  try {
+    const configPath = await writeTempHomeConfig(homeDir, {
+      extensions: { allowList: [] },
+      providers: {
+        default: "pi.main",
+        items: {
+          "pi.main": {
+            type: "provider.pi",
+          },
+        },
+      },
+      connectors: {
+        items: {
+          "discord.main": {
+            type: "connector.discord",
+            botName: "dobby-main",
+            botToken: "token",
+          },
+        },
+      },
+      sandboxes: {
+        default: "host.builtin",
+        items: {},
+      },
+      routes: {
+        defaults: {
+          projectRoot: process.cwd(),
+          provider: "pi.main",
+          sandbox: "host.builtin",
+          tools: "full",
+          mentions: "required",
+        },
+        items: {
+          main: {},
+        },
+      },
+      bindings: {
+        default: {
+          route: "missing-route",
+        },
+        items: {},
+      },
+      data: {
+        rootDir: "./data",
+        dedupTtlMs: 604800000,
+      },
+    });
+
+    const result = await runDoctorWithHome(homeDir, configPath);
+    assert.equal(result.code, 1);
+    assert.equal(result.output.includes("bindings.default.route") && result.output.includes("missing-route"), true);
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
 test("doctor reports init template placeholders as errors and warnings", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "dobby-doctor-placeholders-"));
 
@@ -130,10 +189,9 @@ test("doctor reports init template placeholders as errors and warnings", async (
         items: {
           "pi.main": {
             type: "provider.pi",
-            provider: "custom-openai",
-            model: "example-model",
-            thinkingLevel: "off",
-            modelsFile: "./models.custom.json",
+            model: "REPLACE_WITH_PROVIDER_MODEL_ID",
+            baseUrl: "REPLACE_WITH_PROVIDER_BASE_URL",
+            apiKey: "REPLACE_WITH_PROVIDER_API_KEY_OR_ENV",
           },
         },
       },
@@ -196,6 +254,9 @@ test("doctor reports init template placeholders as errors and warnings", async (
 
     const result = await runDoctorWithHome(homeDir, configPath);
     assert.equal(result.code, 1);
+    assert.equal(result.output.includes("providers.items['pi.main'].model still uses placeholder value"), true);
+    assert.equal(result.output.includes("providers.items['pi.main'].baseUrl still uses placeholder value"), true);
+    assert.equal(result.output.includes("providers.items['pi.main'].apiKey still uses placeholder value"), true);
     assert.equal(result.output.includes("connectors.items['discord.main'].botToken still uses placeholder value"), true);
     assert.equal(result.output.includes("connectors.items['feishu.main'].appId still uses placeholder value"), true);
     assert.equal(result.output.includes("connectors.items['feishu.main'].appSecret still uses placeholder value"), true);

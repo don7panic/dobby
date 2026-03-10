@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
 import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import { loadGatewayConfig } from "../../core/routing.js";
+import { findDobbyRepoRoot, isDobbyRepoRoot } from "../../shared/dobby-repo.js";
 import type { RawGatewayConfig } from "./config-types.js";
 
 /**
@@ -37,27 +37,6 @@ interface ResolvedConfigPathInfo {
   source: ConfigPathSource;
 }
 
-/**
- * Returns true when a directory looks like the dobby repository root.
- */
-function isDobbyRepoRoot(candidateDir: string): boolean {
-  const packageJsonPath = resolve(candidateDir, "package.json");
-  const repoConfigPath = resolve(candidateDir, "config", "gateway.json");
-  const localExtensionsScriptPath = resolve(candidateDir, "scripts", "local-extensions.mjs");
-
-  if (!existsSync(packageJsonPath) || !existsSync(repoConfigPath) || !existsSync(localExtensionsScriptPath)) {
-    return false;
-  }
-
-  try {
-    const packageJsonRaw = readFileSync(packageJsonPath, "utf-8");
-    const parsed = JSON.parse(packageJsonRaw) as { name?: unknown };
-    return parsed.name === "dobby";
-  } catch {
-    return false;
-  }
-}
-
 function resolveConfigBaseDir(configPath: string): string {
   const absoluteConfigPath = resolve(configPath);
   const configDir = dirname(absoluteConfigPath);
@@ -74,19 +53,8 @@ function resolveConfigBaseDir(configPath: string): string {
  * Scans current directory and ancestors to find a local dobby repo config path.
  */
 function findDobbyRepoConfigPath(startDir: string): string | null {
-  let currentDir = resolve(startDir);
-
-  while (true) {
-    if (isDobbyRepoRoot(currentDir)) {
-      return resolve(currentDir, "config", "gateway.json");
-    }
-
-    const parentDir = dirname(currentDir);
-    if (parentDir === currentDir) {
-      return null;
-    }
-    currentDir = parentDir;
-  }
+  const repoRoot = findDobbyRepoRoot(startDir);
+  return repoRoot ? resolve(repoRoot, "config", "gateway.json") : null;
 }
 
 /**

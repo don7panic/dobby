@@ -1,4 +1,9 @@
-import type { RawBindingConfig, RawRouteProfile } from "./config-types.js";
+import type {
+  RawBindingConfig,
+  RawDefaultBindingConfig,
+  RawRouteDefaults,
+  RawRouteProfile,
+} from "./config-types.js";
 import {
   DEFAULT_DISCORD_BOT_NAME,
   DEFAULT_DISCORD_CONNECTOR_INSTANCE_ID,
@@ -37,6 +42,7 @@ interface ConnectorCatalogEntry {
 
 export interface InitSelectionContext {
   routeProviderChoiceId: InitProviderChoiceId;
+  defaultProjectRoot?: string;
 }
 
 export interface InitSelectionResult {
@@ -61,7 +67,9 @@ export interface InitSelectionResult {
   providerContributionId: string;
   providerConfig: Record<string, unknown>;
   routeId: string;
+  routeDefaults: RawRouteDefaults;
   routeProfile: RawRouteProfile;
+  defaultBinding?: RawDefaultBindingConfig;
   bindings: Array<{
     id: string;
     config: RawBindingConfig;
@@ -76,10 +84,9 @@ const PROVIDER_CATALOG: Record<InitProviderChoiceId, ProviderCatalogEntry> = {
     instanceId: "pi.main",
     contributionId: "provider.pi",
     defaultConfig: {
-      provider: "custom-openai",
-      model: "example-model",
-      thinkingLevel: "off",
-      modelsFile: "./models.custom.json",
+      model: "REPLACE_WITH_PROVIDER_MODEL_ID",
+      baseUrl: "REPLACE_WITH_PROVIDER_BASE_URL",
+      apiKey: "REPLACE_WITH_PROVIDER_API_KEY_OR_ENV",
     },
   },
   "provider.claude-cli": {
@@ -222,13 +229,16 @@ export function createInitSelectionConfig(
     providerContributionId: primaryProviderChoice.contributionId,
     providerConfig: structuredClone(primaryProviderChoice.defaultConfig),
     routeId: DEFAULT_INIT_ROUTE_ID,
-    routeProfile: {
-      projectRoot: DEFAULT_INIT_PROJECT_ROOT,
+    routeDefaults: {
+      projectRoot: context.defaultProjectRoot ?? DEFAULT_INIT_PROJECT_ROOT,
       tools: "full",
-      systemPromptFile: "",
       mentions: "required",
       provider: primaryProviderChoice.instanceId,
       sandbox: "host.builtin",
+    },
+    routeProfile: {},
+    defaultBinding: {
+      route: DEFAULT_INIT_ROUTE_ID,
     },
     bindings: connectorChoices.map((connectorChoice) => ({
       id: `${connectorChoice.instanceId}.${DEFAULT_INIT_ROUTE_ID}`,

@@ -10,6 +10,7 @@ import {
 import JSON5 from "json5";
 import {
   ensureGatewayConfigShape,
+  setDefaultBinding,
   setDefaultProviderIfMissingOrInvalid,
   upsertBinding,
   upsertConnectorInstance,
@@ -321,7 +322,28 @@ async function configureRouteSection(config: RawGatewayConfig): Promise<void> {
   const routeId = String(targetRoute) === "__new" ? await requiredText("New route ID", "main") : String(targetRoute);
   const existing = routeItems[routeId];
 
-  const projectRoot = await requiredText("projectRoot", existing?.projectRoot ?? process.cwd());
+  const defaultProjectRoot = next.routes.defaults.projectRoot;
+  let projectRoot = existing?.projectRoot;
+  if (defaultProjectRoot) {
+    const projectRootMode = await select({
+      message: "projectRoot",
+      options: [
+        { value: "__default", label: `Use route default (${defaultProjectRoot})` },
+        { value: "__custom", label: "Set explicit projectRoot" },
+      ],
+      initialValue: existing?.projectRoot ? "__custom" : "__default",
+    });
+    if (isCancel(projectRootMode)) {
+      cancel("Configure cancelled.");
+      throw new Error("Configure cancelled.");
+    }
+
+    projectRoot = projectRootMode === "__custom"
+      ? await requiredText("projectRoot", existing?.projectRoot ?? defaultProjectRoot)
+      : undefined;
+  } else {
+    projectRoot = await requiredText("projectRoot", existing?.projectRoot ?? process.cwd());
+  }
   const tools = await select({
     message: "tools",
     options: [
@@ -383,7 +405,7 @@ async function configureRouteSection(config: RawGatewayConfig): Promise<void> {
   const systemPromptFile = await optionalText("systemPromptFile (optional)", existing?.systemPromptFile ?? "");
 
   upsertRoute(next, routeId, {
-    projectRoot,
+    ...(projectRoot ? { projectRoot } : {}),
     ...(tools !== "__default" ? { tools: String(tools) as "full" | "readonly" } : {}),
     ...(mentions !== "__default" ? { mentions: String(mentions) as "required" | "optional" } : {}),
     ...(providerValue !== "__default" ? { provider: String(providerValue) } : {}),
@@ -407,18 +429,41 @@ async function configureBindingSection(config: RawGatewayConfig): Promise<void> 
   }
 
   const targetBinding = bindingChoices.length === 0
-    ? "__new"
+    ? (next.bindings.default ? "__default" : "__new")
     : await select({
       message: "Select binding",
       options: [
+        { value: "__default", label: next.bindings.default ? "Edit default direct-message binding" : "Create default direct-message binding" },
         ...bindingChoices.map((id) => ({ value: id, label: id })),
         { value: "__new", label: "Create new binding" },
       ],
-      initialValue: bindingChoices[0],
+      initialValue: next.bindings.default ? "__default" : bindingChoices[0],
     });
   if (isCancel(targetBinding)) {
     cancel("Configure cancelled.");
     throw new Error("Configure cancelled.");
+  }
+
+  const routeIds = Object.keys(next.routes.items).sort((a, b) => a.localeCompare(b));
+  if (String(targetBinding) === "__default") {
+    const defaultRouteId = await select({
+      message: "Default direct-message route",
+      options: routeIds.map((id) => ({ value: id, label: id })),
+      initialValue:
+        next.bindings.default?.route && routeIds.includes(next.bindings.default.route)
+          ? next.bindings.default.route
+          : routeIds[0],
+    });
+    if (isCancel(defaultRouteId)) {
+      cancel("Configure cancelled.");
+      throw new Error("Configure cancelled.");
+    }
+
+    setDefaultBinding(next, {
+      route: String(defaultRouteId),
+    });
+    Object.assign(config, next);
+    return;
   }
 
   const bindingId = String(targetBinding) === "__new"
@@ -451,7 +496,6 @@ async function configureBindingSection(config: RawGatewayConfig): Promise<void> 
   }
 
   const sourceId = await requiredText("source.id", existing?.source.id);
-  const routeIds = Object.keys(next.routes.items).sort((a, b) => a.localeCompare(b));
   const routeId = await select({
     message: "route",
     options: routeIds.map((id) => ({ value: id, label: id })),

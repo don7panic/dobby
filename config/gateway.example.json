@@ -24,10 +24,9 @@
     "items": {
       "pi.main": {
         "type": "provider.pi",
-        "provider": "custom-openai",
-        "model": "example-model",
-        "thinkingLevel": "off",
-        "modelsFile": "./models.custom.json"
+        "model": "REPLACE_WITH_PROVIDER_MODEL_ID",
+        "baseUrl": "REPLACE_WITH_PROVIDER_BASE_URL",
+        "apiKey": "REPLACE_WITH_PROVIDER_API_KEY_OR_ENV"
       }
     }
   },
@@ -48,18 +47,23 @@
   },
   "routes": {
     "defaults": {
+      "projectRoot": "/Users/you/workspace/dobby",
       "provider": "pi.main",
       "sandbox": "host.builtin",
       "tools": "full",
       "mentions": "required"
     },
     "items": {
+      "main": {},
       "projectA": {
         "projectRoot": "/Users/you/workspace/project-a"
       }
     }
   },
   "bindings": {
+    "default": {
+      "route": "main"
+    },
     "items": {
       "discord.main.projectA": {
         "connector": "discord.main",

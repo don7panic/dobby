@@ -5,6 +5,7 @@ import { createInitSelectionConfig } from "../shared/init-catalog.js";
 test("createInitSelectionConfig writes Discord starter template for provider.pi", () => {
   const selected = createInitSelectionConfig(["provider.pi"], ["connector.discord"], {
     routeProviderChoiceId: "provider.pi",
+    defaultProjectRoot: "/Users/oolong/workspace/dobby",
   });
 
   assert.deepEqual(selected.providerChoiceIds, ["provider.pi"]);
@@ -16,10 +17,9 @@ test("createInitSelectionConfig writes Discord starter template for provider.pi"
     instanceId: "pi.main",
     contributionId: "provider.pi",
     config: {
-      provider: "custom-openai",
-      model: "example-model",
-      thinkingLevel: "off",
-      modelsFile: "./models.custom.json",
+      model: "REPLACE_WITH_PROVIDER_MODEL_ID",
+      baseUrl: "REPLACE_WITH_PROVIDER_BASE_URL",
+      apiKey: "REPLACE_WITH_PROVIDER_API_KEY_OR_ENV",
     },
   }]);
   assert.deepEqual(selected.connectorInstances, [{
@@ -33,13 +33,16 @@ test("createInitSelectionConfig writes Discord starter template for provider.pi"
       reconnectCheckIntervalMs: 10_000,
     },
   }]);
-  assert.deepEqual(selected.routeProfile, {
-    projectRoot: "./REPLACE_WITH_PROJECT_ROOT",
+  assert.deepEqual(selected.routeDefaults, {
+    projectRoot: "/Users/oolong/workspace/dobby",
     tools: "full",
-    systemPromptFile: "",
     mentions: "required",
     provider: "pi.main",
     sandbox: "host.builtin",
+  });
+  assert.deepEqual(selected.routeProfile, {});
+  assert.deepEqual(selected.defaultBinding, {
+    route: "main",
   });
   assert.deepEqual(selected.bindings, [{
     id: "discord.main.main",
@@ -57,6 +60,7 @@ test("createInitSelectionConfig writes Discord starter template for provider.pi"
 test("createInitSelectionConfig writes Feishu starter template for provider.claude-cli", () => {
   const selected = createInitSelectionConfig(["provider.claude-cli"], ["connector.feishu"], {
     routeProviderChoiceId: "provider.claude-cli",
+    defaultProjectRoot: "/Users/oolong/workspace/dobby",
   });
 
   assert.deepEqual(selected.providerChoiceIds, ["provider.claude-cli"]);
@@ -95,6 +99,7 @@ test("createInitSelectionConfig supports multiple providers and connectors with 
     ["connector.discord", "connector.feishu"],
     {
       routeProviderChoiceId: "provider.claude-cli",
+      defaultProjectRoot: "/Users/oolong/workspace/dobby",
     },
   );
 
@@ -107,8 +112,11 @@ test("createInitSelectionConfig supports multiple providers and connectors with 
     "@dobby.ai/connector-feishu",
   ]);
   assert.equal(selected.providerInstanceId, "claude-cli.main");
-  assert.equal(selected.routeProfile.provider, "claude-cli.main");
+  assert.equal(selected.routeDefaults.provider, "claude-cli.main");
   assert.equal(selected.routeProviderChoiceId, "provider.claude-cli");
+  assert.deepEqual(selected.defaultBinding, {
+    route: "main",
+  });
   assert.deepEqual(selected.bindings, [
     {
       id: "discord.main.main",

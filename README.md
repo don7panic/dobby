@@ -87,9 +87,11 @@ npm run start -- init
 - 交互选择 provider 和 connector（均可多选）
 - 自动安装所选扩展到运行时 extension store
 - 写入一份带占位符的 `gateway.json` 模板
+- 把 `routes.defaults.projectRoot` 设为当前工作目录
+- 为 direct message 生成 `bindings.default`，回落到默认 route
 - 为每个所选 connector 生成一个默认 binding 到同一条 route
 - 生成 `gateway.json`
-- 选择 `provider.pi` 且缺少 `models.custom.json` 时，自动创建该文件
+- `provider.pi` 默认写入最小 inline 配置，不再依赖 `models.custom.json`
 
 说明：当前 `init` 内建这些 starter 选择：
 
@@ -102,7 +104,7 @@ npm run start -- init
 
 - `connectors.items[*]` 中的 token / appId / appSecret
 - `bindings.items[*].source.id`
-- `routes.items[*].projectRoot`
+- `routes.items[*].projectRoot`（如需覆盖默认 project root）
 
 5. 运行诊断
 
@@ -125,7 +127,9 @@ npm run start --
 说明：
 
 - `dobby` 无子命令时，默认等价于 `dobby start`
+- `dobby --version` 可直接查看当前 CLI 版本
 - 在仓库内直接运行时，CLI 会自动使用 `./config/gateway.json`
+- 在仓库内执行 `init` / `extension install` 时，会优先安装 `plugins/*` 的本地构建产物
 - 也可以通过环境变量覆盖配置路径：
 
 ```bash
@@ -170,6 +174,7 @@ cron 配置路径优先级：
 顶层命令：
 
 ```bash
+dobby --version
 dobby start
 dobby init
 dobby doctor [--fix]
@@ -229,14 +234,16 @@ dobby cron remove <jobId>
 - `providers.items[*].type` / `connectors.items[*].type` / `sandboxes.items[*].type`
   - 指向某个 contribution，实例配置直接内联在对象里
 - `routes.defaults`
-  - 统一提供 route 默认的 `provider`、`sandbox`、`tools`、`mentions`
+  - 统一提供 route 默认的 `projectRoot`、`provider`、`sandbox`、`tools`、`mentions`
 - `routes.items[*]`
-  - route 是可复用的执行 profile，定义 `projectRoot`，并按需覆盖 `provider`、`sandbox`、`tools`、`mentions`、`systemPromptFile`
+  - route 是可复用的执行 profile，可继承默认 `projectRoot`，并按需覆盖 `provider`、`sandbox`、`tools`、`mentions`、`systemPromptFile`
+- `bindings.default`
+  - direct message 未命中显式 binding 时使用的默认 route fallback
 - `bindings.items[*]`
   - `(connector, source.type, source.id) -> route` 的入口绑定
 - `sandboxes.default`
   - 未指定时默认使用 `host.builtin`
-- 未匹配 binding 的入站消息会被直接忽略，不存在 default route fallback
+- 未匹配 binding 的入站消息会被直接忽略；仅 direct message 可回落到 `bindings.default`
 
 当前代码还保留但未真正生效的字段：
 
@@ -246,7 +253,24 @@ dobby cron remove <jobId>
 
 - gateway：[`config/gateway.example.json`](config/gateway.example.json)
 - cron：[`config/cron.example.json`](config/cron.example.json)
-- provider.pi 自定义模型：[`config/models.custom.example.json`](config/models.custom.example.json)
+
+`provider.pi` 现在使用 inline custom provider 配置。最小常用字段是：
+
+- `model`
+- `baseUrl`
+- `apiKey`
+
+这些字段默认自动补齐：
+
+- `provider = "custom-openai"`
+- `api = "openai-completions"`
+- `authHeader = false`
+- `thinkingLevel = "off"`
+- `models = [{ id: model }]`
+
+只有在你需要多模型元数据或覆盖能力参数时，才需要手工展开 `models`。
+
+`apiKey` 支持直接写 literal，也支持写环境变量名，由 `pi` 的 `AuthStorage` / `ModelRegistry` 按上游规则解析。
 
 ## 扩展包与 contribution
 
@@ -305,7 +329,8 @@ npm run start -- cron add daily-report \
 
 ## Discord 连接器的当前行为
 
-- 只处理已绑定的 guild channel，DM 目前禁用
+- guild channel 仍按显式 binding 匹配
+- DM 可通过 `bindings.default` 回落到默认 route
 - 线程消息使用父频道 ID 做 binding 查找
 - 会自动下载附件到本地
 - 图片会作为 image input 传给 provider

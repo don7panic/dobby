@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import {
   runConfigListCommand,
@@ -24,6 +26,18 @@ import {
 import { runInitCommand } from "./commands/init.js";
 import { runStartCommand } from "./commands/start.js";
 
+function loadCliVersion(): string {
+  const candidates = [
+    fileURLToPath(new URL("../../package.json", import.meta.url)),
+    fileURLToPath(new URL("../../../package.json", import.meta.url)),
+  ];
+  const fallbackCandidate = fileURLToPath(new URL("../../package.json", import.meta.url));
+  const packageJsonPath = candidates.find((candidate) => existsSync(candidate)) ?? fallbackCandidate;
+  return JSON.parse(readFileSync(packageJsonPath, "utf-8")).version as string;
+}
+
+const CLI_VERSION = loadCliVersion();
+
 /**
  * Builds the top-level dobby CLI program and registers all subcommands.
  */
@@ -31,6 +45,7 @@ export function buildProgram(): Command {
   const program = new Command();
   program
     .name("dobby")
+    .version(CLI_VERSION)
     .description("Discord-first local agent gateway")
     .showHelpAfterError()
     .action(async () => {

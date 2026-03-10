@@ -32,7 +32,7 @@ import {
   type InitConnectorChoiceId,
   type InitProviderChoiceId,
 } from "../shared/init-catalog.js";
-import { ensureProviderPiModelsFile } from "../shared/init-models-file.js";
+import { resolveExtensionInstallSpecs } from "../shared/local-extension-specs.js";
 import { createLogger } from "../shared/runtime.js";
 
 interface InitInput {
@@ -140,16 +140,18 @@ export async function runInitCommand(): Promise<void> {
   const input = await collectInitInput();
   const selected = createInitSelectionConfig(input.providerChoiceIds, input.connectorChoiceIds, {
     routeProviderChoiceId: input.routeProviderChoiceId,
+    defaultProjectRoot: process.cwd(),
   });
 
   const next = ensureGatewayConfigShape({});
   const rootDir = resolveDataRootDir(configPath, next);
   const manager = new ExtensionStoreManager(createLogger(), `${rootDir}/extensions`);
+  const extensionInstallSpecs = await resolveExtensionInstallSpecs(selected.extensionPackages);
 
   const installSpinner = spinner();
   installSpinner.start(`Installing required extensions (${selected.extensionPackages.length} packages)`);
   try {
-    const installedPackages = await manager.installMany(selected.extensionPackages);
+    const installedPackages = await manager.installMany(extensionInstallSpecs);
     for (const installed of installedPackages) {
       upsertAllowListPackage(next, installed.packageName, true);
     }
@@ -176,36 +178,23 @@ export async function runInitCommand(): Promise<void> {
     ...next.routes,
     defaults: {
       ...next.routes.defaults,
-      provider: selected.providerInstanceId,
-      sandbox: "host.builtin",
-      tools: "full",
-      mentions: "required",
+      ...selected.routeDefaults,
     },
   };
 
   upsertRoute(next, selected.routeId, selected.routeProfile);
+  if (selected.defaultBinding) {
+    next.bindings = {
+      ...next.bindings,
+      default: selected.defaultBinding,
+      items: next.bindings.items,
+    };
+  }
   for (const binding of selected.bindings) {
     upsertBinding(next, binding.id, binding.config);
   }
 
   const validatedConfig = await applyAndValidateContributionSchemas(configPath, next);
-
-  const createdModelsFiles: string[] = [];
-  for (const provider of selected.providerInstances) {
-    if (provider.contributionId !== "provider.pi") {
-      continue;
-    }
-
-    const resolvedProvider = validatedConfig.providers?.items?.[provider.instanceId];
-    const { type: _type, ...providerConfig } = resolvedProvider ?? {};
-    const ensured = await ensureProviderPiModelsFile(
-      configPath,
-      Object.keys(providerConfig).length > 0 ? providerConfig : provider.config,
-    );
-    if (ensured.created) {
-      createdModelsFiles.push(ensured.path);
-    }
-  }
 
   await writeConfigWithValidation(configPath, validatedConfig, {
     validate: true,
@@ -215,12 +204,6 @@ export async function runInitCommand(): Promise<void> {
   outro("Initialization completed.");
 
   console.log(`Config written: ${configPath}`);
-  if (createdModelsFiles.length > 0) {
-    console.log("Generated model files:");
-    for (const path of createdModelsFiles) {
-      console.log(`- ${path}`);
-    }
-  }
   console.log("Next steps:");
   console.log("1. Edit gateway.json and replace all REPLACE_WITH_* / YOUR_* placeholders");
   console.log("2. Run 'dobby doctor' to validate the edited config");

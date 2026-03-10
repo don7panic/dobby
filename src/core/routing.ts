@@ -1,14 +1,15 @@
-import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { z } from "zod";
+import { isDobbyRepoRoot } from "../shared/dobby-repo.js";
 import { BUILTIN_HOST_SANDBOX_ID } from "./types.js";
 import type {
   BindingConfig,
   BindingResolution,
   BindingSource,
   ConnectorsConfig,
+  DefaultBindingConfig,
   ExtensionInstanceConfig,
   ExtensionsConfig,
   GatewayConfig,
@@ -25,6 +26,7 @@ const extensionItemSchema = z.object({
 }).catchall(z.unknown());
 
 const routeDefaultsSchema = z.object({
+  projectRoot: z.string().trim().min(1).optional(),
   provider: z.string().trim().min(1).optional(),
   sandbox: z.string().trim().min(1).optional(),
   tools: z.enum(["full", "readonly"]).optional(),
@@ -32,7 +34,7 @@ const routeDefaultsSchema = z.object({
 }).strict();
 
 const routeItemSchema = z.object({
-  projectRoot: z.string().trim().min(1),
+  projectRoot: z.string().trim().min(1).optional(),
   tools: z.enum(["full", "readonly"]).optional(),
   mentions: z.enum(["required", "optional"]).optional(),
   provider: z.string().trim().min(1).optional(),
@@ -51,6 +53,10 @@ const bindingSourceSchema = z.object({
 const bindingItemSchema = z.object({
   connector: z.string().trim().min(1),
   source: bindingSourceSchema,
+  route: z.string().trim().min(1),
+}).strict();
+
+const defaultBindingSchema = z.object({
   route: z.string().trim().min(1),
 }).strict();
 
@@ -81,6 +87,7 @@ const gatewayConfigSchema = z.object({
     items: z.record(z.string(), routeItemSchema),
   }).strict(),
   bindings: z.object({
+    default: defaultBindingSchema.optional(),
     items: z.record(z.string(), bindingItemSchema).default({}),
   }).strict(),
   data: z.object({
@@ -98,24 +105,6 @@ const FORBIDDEN_CONNECTOR_CONFIG_KEYS: Record<string, string> = {
   chatRouteMap: "Use bindings.items to map connector sources to routes.",
   botTokenEnv: "Set botToken directly in connector config or inject it before the config is loaded.",
 };
-
-function isDobbyRepoRoot(candidateDir: string): boolean {
-  const packageJsonPath = resolve(candidateDir, "package.json");
-  const repoConfigPath = resolve(candidateDir, "config", "gateway.json");
-  const localExtensionsScriptPath = resolve(candidateDir, "scripts", "local-extensions.mjs");
-
-  if (!existsSync(packageJsonPath) || !existsSync(repoConfigPath) || !existsSync(localExtensionsScriptPath)) {
-    return false;
-  }
-
-  try {
-    const packageJsonRaw = readFileSync(packageJsonPath, "utf-8");
-    const parsed = JSON.parse(packageJsonRaw) as { name?: unknown };
-    return parsed.name === "dobby";
-  } catch {
-    return false;
-  }
-}
 
 function resolveConfigBaseDir(configPath: string): string {
   const absoluteConfigPath = resolve(configPath);
@@ -192,12 +181,18 @@ function normalizeSandboxes(parsed: ParsedGatewayConfig["sandboxes"]): Sandboxes
 }
 
 function normalizeRouteProfile(
+  routeId: string,
   baseDir: string,
   profile: ParsedRouteItem,
   defaults: RouteDefaultsConfig,
 ): RouteProfile {
+  const resolvedProjectRoot = profile.projectRoot ?? defaults.projectRoot;
+  if (!resolvedProjectRoot) {
+    throw new Error(`routes.items['${routeId}'].projectRoot is required when routes.defaults.projectRoot is not set`);
+  }
+
   const normalized: RouteProfile = {
-    projectRoot: resolveMaybeAbsolute(baseDir, profile.projectRoot),
+    projectRoot: resolveMaybeAbsolute(baseDir, resolvedProjectRoot),
     tools: profile.tools ?? defaults.tools,
     mentions: profile.mentions ?? defaults.mentions,
     provider: profile.provider ?? defaults.provider,
@@ -214,7 +209,7 @@ function normalizeRouteProfile(
 function normalizeRoutes(parsed: ParsedGatewayConfig["routes"], baseDir: string, defaults: RouteDefaultsConfig): RoutesConfig {
   const items: Record<string, RouteProfile> = {};
   for (const [routeId, profile] of Object.entries(parsed.items)) {
-    items[routeId] = normalizeRouteProfile(baseDir, profile, defaults);
+    items[routeId] = normalizeRouteProfile(routeId, baseDir, profile, defaults);
   }
 
   return {
@@ -236,7 +231,10 @@ function normalizeBindings(parsed: ParsedGatewayConfig["bindings"]): GatewayConf
     };
   }
 
-  return { items };
+  return {
+    ...(parsed.default ? { default: { route: parsed.default.route } } : {}),
+    items,
+  };
 }
 
 function validateConnectorConfigKeys(parsed: ParsedGatewayConfig["connectors"]): void {
@@ -300,6 +298,10 @@ function validateReferences(parsed: ParsedGatewayConfig, normalizedRoutes: Route
     }
     seenSources.set(bindingKey, bindingId);
   }
+
+  if (parsed.bindings.default && !normalizedRoutes.items[parsed.bindings.default.route]) {
+    throw new Error(`bindings.default.route references unknown route '${parsed.bindings.default.route}'`);
+  }
 }
 
 export async function loadGatewayConfig(configPath: string): Promise<GatewayConfig> {
@@ -310,6 +312,7 @@ export async function loadGatewayConfig(configPath: string): Promise<GatewayConf
   validateConnectorConfigKeys(parsed.connectors);
 
   const routeDefaults: RouteDefaultsConfig = {
+    ...(parsed.routes.defaults.projectRoot ? { projectRoot: resolveMaybeAbsolute(configBaseDir, parsed.routes.defaults.projectRoot) } : {}),
     provider: parsed.routes.defaults.provider ?? parsed.providers.default,
     sandbox: parsed.routes.defaults.sandbox ?? parsed.sandboxes.default ?? BUILTIN_HOST_SANDBOX_ID,
     tools: parsed.routes.defaults.tools ?? "full",
@@ -355,6 +358,7 @@ export class RouteResolver {
 
 export class BindingResolver {
   private readonly bindingsBySource = new Map<string, BindingResolution>();
+  private readonly defaultBinding: BindingResolution | null;
 
   constructor(bindings: GatewayConfig["bindings"]) {
     for (const [bindingId, binding] of Object.entries(bindings.items)) {
@@ -363,14 +367,35 @@ export class BindingResolver {
         config: binding,
       });
     }
+
+    this.defaultBinding = bindings.default
+      ? {
+        bindingId: "__default__",
+        config: {
+          connector: "__default__",
+          source: {
+            type: "chat",
+            id: "__direct_message__",
+          },
+          route: bindings.default.route,
+        },
+      }
+      : null;
   }
 
-  resolve(connectorId: string, source: BindingSource): BindingResolution | null {
+  resolve(
+    connectorId: string,
+    source: BindingSource,
+    options?: {
+      isDirectMessage?: boolean;
+    },
+  ): BindingResolution | null {
     if (!connectorId.trim() || !source.id.trim()) {
-      return null;
+      return options?.isDirectMessage ? this.defaultBinding : null;
     }
 
-    return this.bindingsBySource.get(this.buildKey(connectorId, source)) ?? null;
+    return this.bindingsBySource.get(this.buildKey(connectorId, source))
+      ?? (options?.isDirectMessage ? this.defaultBinding : null);
   }
 
   private buildKey(connectorId: string, source: BindingSource): string {

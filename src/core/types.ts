@@ -107,6 +107,7 @@ export interface ConnectorPlugin {
 }
 
 export interface RouteDefaultsConfig {
+  projectRoot?: string;
   provider: string;
   sandbox: string;
   tools: ToolProfile;
@@ -161,7 +162,12 @@ export interface BindingConfig {
   route: string;
 }
 
+export interface DefaultBindingConfig {
+  route: string;
+}
+
 export interface BindingsConfig {
+  default?: DefaultBindingConfig;
   items: Record<string, BindingConfig>;
 }
 

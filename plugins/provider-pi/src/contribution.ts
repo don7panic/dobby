@@ -42,10 +42,32 @@ type RuntimeTool = NonNullable<CreateAgentSessionOptions["tools"]>[number];
 interface PiProviderConfig {
   provider: string;
   model: string;
+  baseUrl: string;
+  apiKey: string;
+  api: Api;
+  headers?: Record<string, string>;
+  authHeader: boolean;
+  models: PiProviderModelConfig[];
   thinkingLevel: ThinkingLevel;
   agentDir?: string;
   authFile?: string;
-  modelsFile?: string;
+}
+
+interface PiProviderModelConfig {
+  id: string;
+  name: string;
+  api?: Api;
+  reasoning: boolean;
+  input: Array<"text" | "image">;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
+  contextWindow: number;
+  maxTokens: number;
+  headers?: Record<string, string>;
 }
 
 interface BuiltTools {
@@ -53,14 +75,99 @@ interface BuiltTools {
   customTools: ToolDefinition[];
 }
 
+const DEFAULT_PI_PROVIDER_NAME = "custom-openai";
+const DEFAULT_PI_PROVIDER_API = "openai-completions";
+const DEFAULT_PI_MODEL_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+} as const;
+
+const PI_PROVIDER_APIS = [
+  "anthropic-messages",
+  "openai-completions",
+  "mistral-conversations",
+  "openai-responses",
+  "azure-openai-responses",
+  "openai-codex-responses",
+  "google-generative-ai",
+  "google-gemini-cli",
+  "google-vertex",
+  "bedrock-converse-stream",
+] as const;
+
+const piProviderApiSchema = z.enum(PI_PROVIDER_APIS);
+
+const piProviderModelSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).optional(),
+  api: piProviderApiSchema.optional(),
+  reasoning: z.boolean().default(false),
+  input: z.array(z.enum(["text", "image"])).min(1).default(["text"]),
+  cost: z.object({
+    input: z.number().default(0),
+    output: z.number().default(0),
+    cacheRead: z.number().default(0),
+    cacheWrite: z.number().default(0),
+  }).default(DEFAULT_PI_MODEL_COST),
+  contextWindow: z.number().int().positive().default(128000),
+  maxTokens: z.number().int().positive().default(16384),
+  headers: z.record(z.string(), z.string()).optional(),
+});
+
 const piProviderConfigSchema = z.object({
-  provider: z.string().min(1),
+  provider: z.string().min(1).optional(),
   model: z.string().min(1),
-  thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).default("off"),
+  baseUrl: z.string().min(1),
+  apiKey: z.string().min(1),
+  api: piProviderApiSchema.optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  authHeader: z.boolean().optional(),
+  models: z.array(piProviderModelSchema).min(1).optional(),
+  thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
   agentDir: z.string().optional(),
   authFile: z.string().optional(),
-  modelsFile: z.string().default("./models.custom.json"),
 });
+
+function buildImplicitModelConfig(modelId: string): PiProviderModelConfig {
+  return {
+    id: modelId,
+    name: modelId,
+    reasoning: false,
+    input: ["text"],
+    cost: { ...DEFAULT_PI_MODEL_COST },
+    contextWindow: 128000,
+    maxTokens: 16384,
+  };
+}
+
+function normalizePiProviderModels(
+  activeModelId: string,
+  models: Array<z.infer<typeof piProviderModelSchema>> | undefined,
+): PiProviderModelConfig[] {
+  if (!models || models.length === 0) {
+    return [buildImplicitModelConfig(activeModelId)];
+  }
+
+  const normalizedModels = models.map((model) => ({
+    id: model.id,
+    name: model.name ?? model.id,
+    ...(model.api ? { api: model.api } : {}),
+    reasoning: model.reasoning,
+    input: model.input,
+    cost: model.cost,
+    contextWindow: model.contextWindow,
+    maxTokens: model.maxTokens,
+    ...(model.headers ? { headers: model.headers } : {}),
+  }));
+
+  if (!normalizedModels.some((model) => model.id === activeModelId)) {
+    throw new Error(`Configured model '${activeModelId}' is not present in provider.pi models`);
+  }
+
+  return normalizedModels;
+}
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -222,7 +329,26 @@ class PiProviderInstanceImpl implements ProviderInstance {
     private readonly logger: ProviderInstanceCreateOptions["host"]["logger"],
   ) {
     this.authStorage = AuthStorage.create(providerConfig.authFile);
-    this.modelRegistry = new ModelRegistry(this.authStorage, providerConfig.modelsFile);
+    // Point the registry at a never-created file so provider.pi relies solely on inline config.
+    this.modelRegistry = new ModelRegistry(this.authStorage, join(dataConfig.stateDir, "__dobby_provider_pi_inline_models__", `${safeSegment(id)}.json`));
+    this.modelRegistry.registerProvider(providerConfig.provider, {
+      baseUrl: providerConfig.baseUrl,
+      apiKey: providerConfig.apiKey,
+      api: providerConfig.api,
+      ...(providerConfig.headers ? { headers: providerConfig.headers } : {}),
+      ...(providerConfig.authHeader ? { authHeader: true } : {}),
+      models: providerConfig.models.map((model) => ({
+        id: model.id,
+        name: model.name,
+        ...(model.api ? { api: model.api } : {}),
+        reasoning: model.reasoning,
+        input: model.input,
+        cost: model.cost,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+        ...(model.headers ? { headers: model.headers } : {}),
+      })),
+    });
 
     const model = this.modelRegistry.find(providerConfig.provider, providerConfig.model);
     if (!model) {
@@ -458,15 +584,19 @@ export const providerPiContribution: ProviderContributionModule = {
     const parsed = piProviderConfigSchema.parse(options.config);
     const agentDir = normalizeMaybePath(options.host.configBaseDir, parsed.agentDir);
     const authFile = normalizeMaybePath(options.host.configBaseDir, parsed.authFile);
-    const modelsFile = normalizeMaybePath(options.host.configBaseDir, parsed.modelsFile);
 
     const normalizedConfig: PiProviderConfig = {
-      provider: parsed.provider,
+      provider: parsed.provider ?? DEFAULT_PI_PROVIDER_NAME,
       model: parsed.model,
-      thinkingLevel: parsed.thinkingLevel,
+      baseUrl: parsed.baseUrl,
+      apiKey: parsed.apiKey,
+      api: parsed.api ?? DEFAULT_PI_PROVIDER_API,
+      ...(parsed.headers ? { headers: parsed.headers } : {}),
+      authHeader: parsed.authHeader ?? false,
+      models: normalizePiProviderModels(parsed.model, parsed.models),
+      thinkingLevel: parsed.thinkingLevel ?? "off",
       ...(agentDir ? { agentDir } : {}),
       ...(authFile ? { authFile } : {}),
-      ...(modelsFile ? { modelsFile } : {}),
     };
 
     return new PiProviderInstanceImpl(options.instanceId, normalizedConfig, options.data, options.host.logger);

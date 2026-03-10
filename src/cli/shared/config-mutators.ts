@@ -4,6 +4,7 @@ import type {
   ContributionTemplatesByKind,
   NormalizedGatewayConfig,
   RawBindingConfig,
+  RawDefaultBindingConfig,
   RawExtensionItemConfig,
   RawGatewayConfig,
   RawRouteDefaults,
@@ -65,6 +66,7 @@ function asRouteDefaults(value: unknown): RawRouteDefaults {
   }
 
   return {
+    ...(typeof value.projectRoot === "string" && value.projectRoot.trim().length > 0 ? { projectRoot: value.projectRoot } : {}),
     ...(typeof value.provider === "string" && value.provider.trim().length > 0 ? { provider: value.provider } : {}),
     ...(typeof value.sandbox === "string" && value.sandbox.trim().length > 0 ? { sandbox: value.sandbox } : {}),
     tools: value.tools === "readonly" ? "readonly" : "full",
@@ -79,13 +81,13 @@ function asRoutes(value: unknown): Record<string, RawRouteProfile> {
 
   const normalized: Record<string, RawRouteProfile> = {};
   for (const [routeId, route] of Object.entries(value)) {
-    if (!isRecord(route) || typeof route.projectRoot !== "string" || route.projectRoot.trim().length === 0) {
+    if (!isRecord(route)) {
       continue;
     }
 
     normalized[routeId] = {
       ...route,
-      projectRoot: route.projectRoot,
+      ...(typeof route.projectRoot === "string" && route.projectRoot.trim().length > 0 ? { projectRoot: route.projectRoot } : {}),
       ...(route.tools === "readonly" ? { tools: "readonly" as const } : {}),
       ...(route.mentions === "optional" ? { mentions: "optional" as const } : {}),
       ...(typeof route.provider === "string" && route.provider.trim().length > 0 ? { provider: route.provider } : {}),
@@ -95,6 +97,17 @@ function asRoutes(value: unknown): Record<string, RawRouteProfile> {
   }
 
   return normalized;
+}
+
+function asDefaultBinding(value: unknown): RawDefaultBindingConfig | undefined {
+  if (!isRecord(value) || typeof value.route !== "string" || value.route.trim().length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...value,
+    route: value.route,
+  };
 }
 
 function asBindings(value: unknown): Record<string, RawBindingConfig> {
@@ -155,6 +168,8 @@ export function ensureGatewayConfigShape(config: RawGatewayConfig): NormalizedGa
     routeDefaults.sandbox = normalizedSandboxesDefault;
   }
 
+  const defaultBinding = asDefaultBinding(config.bindings?.default);
+
   return {
     ...config,
     extensions: {
@@ -182,6 +197,7 @@ export function ensureGatewayConfigShape(config: RawGatewayConfig): NormalizedGa
     },
     bindings: {
       ...((isRecord(config.bindings) ? config.bindings : {}) as Record<string, unknown>),
+      ...(defaultBinding ? { default: defaultBinding } : {}),
       items: asBindings(config.bindings?.items),
     },
     data: {
@@ -403,7 +419,7 @@ export function setDefaultProviderIfMissingOrInvalid(config: RawGatewayConfig): 
 export function upsertRoute(config: RawGatewayConfig, routeId: string, profile: RawRouteProfile): void {
   const next = ensureGatewayConfigShape(config);
   next.routes.items[routeId] = {
-    projectRoot: profile.projectRoot,
+    ...(typeof profile.projectRoot === "string" && profile.projectRoot.trim().length > 0 ? { projectRoot: profile.projectRoot } : {}),
     ...(profile.tools ? { tools: profile.tools } : {}),
     ...(profile.mentions ? { mentions: profile.mentions } : {}),
     ...(profile.provider ? { provider: profile.provider } : {}),
@@ -423,6 +439,20 @@ export function upsertBinding(config: RawGatewayConfig, bindingId: string, bindi
     ...next.bindings,
     items: next.bindings.items,
   };
+}
+
+export function setDefaultBinding(config: RawGatewayConfig, binding: RawDefaultBindingConfig | undefined): void {
+  const next = ensureGatewayConfigShape(config);
+  const normalizedBinding = binding ? structuredClone(binding) : undefined;
+  config.bindings = {
+    ...next.bindings,
+    ...(normalizedBinding ? { default: normalizedBinding } : {}),
+    items: next.bindings.items,
+  };
+
+  if (!normalizedBinding) {
+    delete config.bindings.default;
+  }
 }
 
 export function listContributionIds(config: RawGatewayConfig): {

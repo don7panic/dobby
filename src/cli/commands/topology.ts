@@ -18,7 +18,7 @@ interface DiscordConnectorView {
 interface BindingView {
   bindingId: string;
   connectorId: string;
-  sourceType: "channel" | "chat";
+  sourceType: string;
   sourceId: string;
   routeId: string;
   routeExists: boolean;
@@ -33,6 +33,18 @@ interface RouteView {
   provider?: string;
   sandbox?: string;
   bindings: number;
+}
+
+function effectiveRouteProjectRoot(
+  normalized: ReturnType<typeof ensureGatewayConfigShape>,
+  routeId: string,
+): string | undefined {
+  const route = normalized.routes.items[routeId];
+  if (!route) {
+    return undefined;
+  }
+
+  return route.projectRoot ?? normalized.routes.defaults.projectRoot;
 }
 
 function listDiscordConnectors(rawConfig: unknown): DiscordConnectorView[] {
@@ -82,12 +94,11 @@ function getDiscordConnectorOrThrow(
 
 function listBindings(rawConfig: unknown, connectorFilter?: string): BindingView[] {
   const normalized = ensureGatewayConfigShape(rawConfig as RawGatewayConfig);
-  const routes = normalized.routes.items;
-
-  return Object.entries(normalized.bindings.items)
+  const bindings: BindingView[] = Object.entries(normalized.bindings.items)
     .filter(([, binding]) => !connectorFilter || binding.connector === connectorFilter)
     .map(([bindingId, binding]) => {
-      const route = routes[binding.route];
+      const route = normalized.routes.items[binding.route];
+      const projectRoot = route ? effectiveRouteProjectRoot(normalized, binding.route) : undefined;
       return {
         bindingId,
         connectorId: binding.connector,
@@ -95,15 +106,30 @@ function listBindings(rawConfig: unknown, connectorFilter?: string): BindingView
         sourceId: binding.source.id,
         routeId: binding.route,
         routeExists: Boolean(route),
-        ...(route ? { projectRoot: route.projectRoot } : {}),
+        ...(projectRoot ? { projectRoot } : {}),
       };
-    })
-    .sort((a, b) => a.bindingId.localeCompare(b.bindingId));
+    });
+
+  if (!connectorFilter && normalized.bindings.default) {
+    const projectRoot = effectiveRouteProjectRoot(normalized, normalized.bindings.default.route);
+    bindings.push({
+      bindingId: "bindings.default",
+      connectorId: "*",
+      sourceType: "direct_message",
+      sourceId: "*",
+      routeId: normalized.bindings.default.route,
+      routeExists: Boolean(normalized.routes.items[normalized.bindings.default.route]),
+      ...(projectRoot ? { projectRoot } : {}),
+    });
+  }
+
+  return bindings.sort((a, b) => a.bindingId.localeCompare(b.bindingId));
 }
 
 function buildRouteBindingCounts(rawConfig: unknown): Map<string, number> {
+  const normalized = ensureGatewayConfigShape(rawConfig as RawGatewayConfig);
   const counts = new Map<string, number>();
-  for (const binding of listBindings(rawConfig)) {
+  for (const binding of listBindings(normalized)) {
     counts.set(binding.routeId, (counts.get(binding.routeId) ?? 0) + 1);
   }
   return counts;
@@ -116,7 +142,7 @@ function listRoutes(rawConfig: unknown): RouteView[] {
   return Object.entries(normalized.routes.items)
     .map(([routeId, route]): RouteView => ({
       routeId,
-      projectRoot: route.projectRoot,
+      projectRoot: effectiveRouteProjectRoot(normalized, routeId) ?? "(unset)",
       tools: route.tools === "readonly" ? "readonly" : "full",
       mentions: route.mentions === "optional" ? "optional" : "required",
       ...(route.provider ? { provider: route.provider } : {}),
@@ -319,7 +345,7 @@ export async function runRouteSetCommand(options: {
   const existing = normalized.routes.items[options.routeId];
 
   const projectRoot = options.projectRoot?.trim() || existing?.projectRoot;
-  if (!projectRoot) {
+  if (!projectRoot && !normalized.routes.defaults.projectRoot) {
     throw new Error("--project-root is required when creating a new route");
   }
 
@@ -339,7 +365,7 @@ export async function runRouteSetCommand(options: {
   }
 
   upsertRoute(normalized, options.routeId, {
-    projectRoot,
+    ...(projectRoot ? { projectRoot } : {}),
     ...(toolsRaw ? { tools: toolsRaw } : {}),
     ...((options.mentions ?? existing?.mentions) ? { mentions: (options.mentions ?? existing?.mentions)! } : {}),
     ...(provider ? { provider } : {}),
@@ -363,17 +389,23 @@ export async function runRouteRemoveCommand(options: {
     throw new Error(`Route '${options.routeId}' not found`);
   }
 
-  const bindingRefs = listBindings(normalized).filter((binding) => binding.routeId === options.routeId);
-  if (bindingRefs.length > 0 && !options.cascadeBindings) {
+  const bindingRefs = listBindings(normalized).filter(
+    (binding) => binding.routeId === options.routeId && binding.bindingId !== "bindings.default",
+  );
+  const hasDefaultBindingRef = normalized.bindings.default?.route === options.routeId;
+  if ((bindingRefs.length > 0 || hasDefaultBindingRef) && !options.cascadeBindings) {
     const refList = bindingRefs.map((binding) => binding.bindingId).join(", ");
     throw new Error(
-      `Route '${options.routeId}' is referenced by bindings (${refList}). Re-run with --cascade-bindings to remove these bindings automatically.`,
+      `Route '${options.routeId}' is referenced by bindings (${[refList, hasDefaultBindingRef ? "bindings.default" : ""].filter(Boolean).join(", ")}). Re-run with --cascade-bindings to remove these bindings automatically.`,
     );
   }
 
-  if (bindingRefs.length > 0 && options.cascadeBindings) {
+  if (options.cascadeBindings) {
     for (const binding of bindingRefs) {
       delete normalized.bindings.items[binding.bindingId];
+    }
+    if (hasDefaultBindingRef) {
+      delete normalized.bindings.default;
     }
   }
 

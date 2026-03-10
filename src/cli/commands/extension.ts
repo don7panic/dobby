@@ -12,6 +12,7 @@ import {
 } from "../shared/config-mutators.js";
 import { readRawConfig, requireRawConfig, resolveConfigPath, resolveDataRootDir, writeConfigWithValidation } from "../shared/config-io.js";
 import type { RawGatewayConfig } from "../shared/config-types.js";
+import { resolveExtensionInstallSpecs } from "../shared/local-extension-specs.js";
 import { createLogger } from "../shared/runtime.js";
 
 /**
@@ -42,7 +43,8 @@ export async function runExtensionInstallCommand(options: {
 
   const rawConfig = (await readRawConfig(configPath)) ?? {};
   const manager = new ExtensionStoreManager(logger, extensionStoreDirFromRaw(configPath, rawConfig));
-  const installed = await manager.install(options.spec);
+  const [resolvedSpec] = await resolveExtensionInstallSpecs([options.spec]);
+  const installed = await manager.install(resolvedSpec ?? options.spec);
 
   if (!options.enable) {
     const templates = buildContributionTemplates(installed.manifest.contributions);
