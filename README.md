@@ -7,6 +7,7 @@ Discord-first 本地 Agent Gateway。宿主只负责 CLI、网关主流程、扩
 - `@dobby.ai/connector-discord`
 - `@dobby.ai/connector-feishu`
 - `@dobby.ai/provider-pi`
+- `@dobby.ai/provider-codex-cli`
 - `@dobby.ai/provider-claude-cli`
 - `@dobby.ai/provider-claude`
 - `@dobby.ai/sandbox-core`
@@ -59,7 +60,7 @@ Discord / Cron
 - npm
 - 对应 provider / connector 的外部运行条件
   - 例如 Discord bot token
-  - Claude CLI 或 Claude Agent SDK 所需认证
+  - Codex CLI、Claude CLI 或 Claude Agent SDK 所需认证
   - 可选的 Docker / Boxlite 运行环境
 
 ## 快速开始
@@ -274,6 +275,7 @@ dobby cron remove <jobId>
 
 - `connector.discord`
 - `provider.pi`
+- `provider.codex-cli`
 - `provider.claude-cli`
 - `provider.claude`
 - `sandbox.boxlite`
@@ -284,12 +286,27 @@ dobby cron remove <jobId>
 - provider：`provider.pi`、`provider.claude-cli`
 - connector：`connector.discord`、`connector.feishu`
 
-`provider.claude` 与 sandbox 相关扩展需要手工安装和配置，例如：
+`provider.codex-cli`、`provider.claude` 与 sandbox 相关扩展需要手工安装和配置，例如：
 
 ```bash
+npm run start -- extension install @dobby.ai/provider-codex-cli --enable
 npm run start -- extension install @dobby.ai/provider-claude --enable
 npm run start -- extension install @dobby.ai/sandbox-core --enable
 ```
+
+若使用 `provider.codex-cli`，启动前建议检查：
+
+```bash
+codex --version
+codex login status
+```
+
+最小配置字段：
+
+- `command`（默认 `codex`）
+- `commandArgs`（默认 `[]`）
+- `model`（可选；未设置时使用 Codex CLI / 本地配置默认模型）
+- `skipGitRepoCheck`（默认 `false`）
 
 `--enable` 的行为：
 

@@ -135,14 +135,27 @@ npm run start -- extension install @dobby.ai/connector-discord
 可选扩展：
 
 ```bash
+npm run start -- extension install @dobby.ai/provider-codex-cli
 npm run start -- extension install @dobby.ai/provider-claude
 npm run start -- extension install @dobby.ai/provider-claude-cli
 npm run start -- extension install @dobby.ai/sandbox-core
 ```
 
-Claude provider 说明：
-1. `provider.claude`（`@dobby.ai/provider-claude`）走 Claude Agent SDK。
-2. `provider.claude-cli`（`@dobby.ai/provider-claude-cli`）走 Claude Code CLI（当前为 host-only）。
+CLI / Claude provider 说明：
+1. `provider.codex-cli`（`@dobby.ai/provider-codex-cli`）走 Codex CLI（当前为 host-only）。
+2. `provider.claude`（`@dobby.ai/provider-claude`）走 Claude Agent SDK。
+3. `provider.claude-cli`（`@dobby.ai/provider-claude-cli`）走 Claude Code CLI（当前为 host-only）。
+
+若使用 `provider.codex-cli`，启动前建议检查：
+
+```bash
+codex --version
+codex login status
+```
+
+说明：
+1. `provider.codex-cli` 认证由外部 `codex` CLI 自己管理，可用 ChatGPT 登录态或 API key。
+2. `provider.codex-cli` 当前只处理文本 / 附件路径，不转发图片输入。
 
 若使用 `provider.claude-cli`，启动前建议检查：
 
@@ -152,8 +165,8 @@ claude auth status --json
 ```
 
 说明：
-1. 若配置 `authMode=subscription`，`claude auth status --json` 需显示 `loggedIn: true`。
-2. 若配置 `authMode=apiKey`，需在网关启动环境提供 `ANTHROPIC_API_KEY`。
+1. 若配置 `provider.claude-cli.authMode=subscription`，`claude auth status --json` 需显示 `loggedIn: true`。
+2. 若配置 `provider.claude-cli.authMode=apiKey`，需在网关启动环境提供 `ANTHROPIC_API_KEY`。
 
 查看已安装扩展：
 

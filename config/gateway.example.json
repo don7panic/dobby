@@ -16,6 +16,10 @@
       {
         "package": "@dobby.ai/provider-claude-cli",
         "enabled": false
+      },
+      {
+        "package": "@dobby.ai/provider-codex-cli",
+        "enabled": false
       }
     ]
   },
@@ -102,6 +106,13 @@
           "authMode": "auto",
           "permissionMode": "bypassPermissions",
           "streamVerbose": true
+        },
+        "codex-cli.main": {
+          "type": "provider.codex-cli",
+          "command": "codex",
+          "commandArgs": [],
+          "model": "gpt-5-codex",
+          "skipGitRepoCheck": false
         }
       }
     },

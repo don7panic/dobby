@@ -15,6 +15,7 @@ const publishTargets = [
   { dir: "plugins/connector-discord" },
   { dir: "plugins/connector-feishu" },
   { dir: "plugins/provider-pi" },
+  { dir: "plugins/provider-codex-cli" },
   { dir: "plugins/provider-claude-cli" },
   { dir: "plugins/provider-claude" },
   { dir: "." },

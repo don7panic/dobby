@@ -1,0 +1,40 @@
+{
+  "name": "@dobby.ai/provider-codex-cli",
+  "version": "0.1.3",
+  "private": false,
+  "type": "module",
+  "description": "Codex CLI provider extension package",
+  "main": "./index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.53.0",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@dobby.ai/plugin-sdk": "^0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@dobby.ai/plugin-sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@dobby.ai/plugin-sdk": "file:../plugin-sdk",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2"
+  },
+  "files": [
+    "index.js",
+    "dist/",
+    "dobby.manifest.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

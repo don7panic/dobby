@@ -1,0 +1,17 @@
+{
+  "apiVersion": "1.0",
+  "name": "@dobby.ai/provider-codex-cli",
+  "version": "0.1.0",
+  "contributions": [
+    {
+      "id": "provider.codex-cli",
+      "kind": "provider",
+      "entry": "./dist/contribution.js",
+      "capabilities": {
+        "supportsStreaming": true,
+        "supportsAbort": true,
+        "supportsImages": false
+      }
+    }
+  ]
+}
