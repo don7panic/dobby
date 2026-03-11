@@ -160,7 +160,7 @@ export function ensureGatewayConfigShape(config: RawGatewayConfig): NormalizedGa
       ? config.sandboxes.default
       : "host.builtin";
 
-  const routeDefaults = asRouteDefaults(config.routes?.defaults);
+  const routeDefaults = asRouteDefaults(config.routes?.default);
   if (!routeDefaults.provider && normalizedProvidersDefault) {
     routeDefaults.provider = normalizedProvidersDefault;
   }
@@ -192,7 +192,7 @@ export function ensureGatewayConfigShape(config: RawGatewayConfig): NormalizedGa
     },
     routes: {
       ...((isRecord(config.routes) ? config.routes : {}) as Record<string, unknown>),
-      defaults: routeDefaults,
+      default: routeDefaults,
       items: asRoutes(config.routes?.items),
     },
     bindings: {
@@ -384,11 +384,11 @@ export function setDefaultProviderIfMissingOrInvalid(config: RawGatewayConfig): 
 
   if (defaultProvider && items[defaultProvider]) {
     config.providers = next.providers;
-    if (!next.routes.defaults.provider) {
+    if (!next.routes.default.provider) {
       config.routes = {
         ...next.routes,
         defaults: {
-          ...next.routes.defaults,
+          ...next.routes.default,
           provider: defaultProvider,
         },
       };
@@ -409,8 +409,8 @@ export function setDefaultProviderIfMissingOrInvalid(config: RawGatewayConfig): 
   };
   config.routes = {
     ...next.routes,
-    defaults: {
-      ...next.routes.defaults,
+    default: {
+      ...next.routes.default,
       provider: candidates[0]!,
     },
   };

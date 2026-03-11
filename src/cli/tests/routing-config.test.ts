@@ -50,7 +50,7 @@ function validConfig(): Record<string, unknown> {
       items: {},
     },
     routes: {
-      defaults: {
+      default: {
         provider: "pi.main",
         sandbox: "host.builtin",
         tools: "full",
@@ -91,7 +91,7 @@ test("loadGatewayConfig applies route defaults and resolves relative paths", asy
     const configDir = dirname(configPath);
 
     assert.equal(loaded.providers.default, "pi.main");
-    assert.deepEqual(loaded.routes.defaults, {
+    assert.deepEqual(loaded.routes.default, {
       provider: "pi.main",
       sandbox: "host.builtin",
       tools: "full",
@@ -134,10 +134,10 @@ test("loadGatewayConfig resolves data.rootDir from repo root for repo-local conf
   }
 });
 
-test("loadGatewayConfig applies routes.defaults.projectRoot and bindings.default for direct messages", async () => {
+test("loadGatewayConfig applies routes.default.projectRoot and bindings.default for direct messages", async () => {
   const payload = validConfig();
   payload.routes = {
-    defaults: {
+    default: {
       projectRoot: "./workspace/default-root",
       provider: "pi.main",
       sandbox: "host.builtin",
@@ -162,7 +162,7 @@ test("loadGatewayConfig applies routes.defaults.projectRoot and bindings.default
     const configDir = dirname(configPath);
     const resolver = new BindingResolver(loaded.bindings);
 
-    assert.deepEqual(loaded.routes.defaults, {
+    assert.deepEqual(loaded.routes.default, {
       projectRoot: join(configDir, "workspace/default-root"),
       provider: "pi.main",
       sandbox: "host.builtin",

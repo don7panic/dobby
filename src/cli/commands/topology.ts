@@ -44,7 +44,7 @@ function effectiveRouteProjectRoot(
     return undefined;
   }
 
-  return route.projectRoot ?? normalized.routes.defaults.projectRoot;
+  return route.projectRoot ?? normalized.routes.default.projectRoot;
 }
 
 function listDiscordConnectors(rawConfig: unknown): DiscordConnectorView[] {
@@ -345,7 +345,7 @@ export async function runRouteSetCommand(options: {
   const existing = normalized.routes.items[options.routeId];
 
   const projectRoot = options.projectRoot?.trim() || existing?.projectRoot;
-  if (!projectRoot && !normalized.routes.defaults.projectRoot) {
+  if (!projectRoot && !normalized.routes.default.projectRoot) {
     throw new Error("--project-root is required when creating a new route");
   }
 

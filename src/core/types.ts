@@ -106,7 +106,7 @@ export interface ConnectorPlugin {
   stop(): Promise<void>;
 }
 
-export interface RouteDefaultsConfig {
+export interface RouteDefaultConfig {
   projectRoot?: string;
   provider: string;
   sandbox: string;
@@ -124,7 +124,7 @@ export interface RouteProfile {
 }
 
 export interface RoutesConfig {
-  defaults: RouteDefaultsConfig;
+  default: RouteDefaultConfig;
   items: Record<string, RouteProfile>;
 }
 

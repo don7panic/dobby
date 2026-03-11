@@ -200,21 +200,21 @@ export async function runDoctorCommand(options: {
     }
   }
 
-  if (normalized.routes.defaults.projectRoot && isPlaceholderValue(normalized.routes.defaults.projectRoot)) {
+  if (normalized.routes.default.projectRoot && isPlaceholderValue(normalized.routes.default.projectRoot)) {
     issues.push({
       level: "warning",
-      message: `routes.defaults.projectRoot still uses placeholder value '${normalized.routes.defaults.projectRoot}'`,
+      message: `routes.default.projectRoot still uses placeholder value '${normalized.routes.default.projectRoot}'`,
     });
   }
 
   for (const [routeId, route] of Object.entries(normalized.routes.items)) {
-    const effectiveProjectRoot = route.projectRoot ?? normalized.routes.defaults.projectRoot;
-    const projectRootSource = route.projectRoot ? `routes.items['${routeId}'].projectRoot` : "routes.defaults.projectRoot";
+    const effectiveProjectRoot = route.projectRoot ?? normalized.routes.default.projectRoot;
+    const projectRootSource = route.projectRoot ? `routes.items['${routeId}'].projectRoot` : "routes.default.projectRoot";
 
     if (!effectiveProjectRoot) {
       issues.push({
         level: "error",
-        message: `routes.items['${routeId}'].projectRoot is required when routes.defaults.projectRoot is not set`,
+        message: `routes.items['${routeId}'].projectRoot is required when routes.default.projectRoot is not set`,
       });
       continue;
     }

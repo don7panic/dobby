@@ -14,7 +14,7 @@ import type {
   ExtensionsConfig,
   GatewayConfig,
   ProvidersConfig,
-  RouteDefaultsConfig,
+  RouteDefaultConfig,
   RouteProfile,
   RouteResolution,
   RoutesConfig,
@@ -25,7 +25,7 @@ const extensionItemSchema = z.object({
   type: z.string().trim().min(1),
 }).catchall(z.unknown());
 
-const routeDefaultsSchema = z.object({
+const routeDefaultSchema = z.object({
   projectRoot: z.string().trim().min(1).optional(),
   provider: z.string().trim().min(1).optional(),
   sandbox: z.string().trim().min(1).optional(),
@@ -83,7 +83,7 @@ const gatewayConfigSchema = z.object({
     items: z.record(z.string(), extensionItemSchema).default({}),
   }).strict(),
   routes: z.object({
-    defaults: routeDefaultsSchema.default({}),
+    default: routeDefaultSchema.default({}),
     items: z.record(z.string(), routeItemSchema),
   }).strict(),
   bindings: z.object({
@@ -184,11 +184,11 @@ function normalizeRouteProfile(
   routeId: string,
   baseDir: string,
   profile: ParsedRouteItem,
-  defaults: RouteDefaultsConfig,
+  defaults: RouteDefaultConfig,
 ): RouteProfile {
   const resolvedProjectRoot = profile.projectRoot ?? defaults.projectRoot;
   if (!resolvedProjectRoot) {
-    throw new Error(`routes.items['${routeId}'].projectRoot is required when routes.defaults.projectRoot is not set`);
+    throw new Error(`routes.items['${routeId}'].projectRoot is required when routes.default.projectRoot is not set`);
   }
 
   const normalized: RouteProfile = {
@@ -206,14 +206,14 @@ function normalizeRouteProfile(
   return normalized;
 }
 
-function normalizeRoutes(parsed: ParsedGatewayConfig["routes"], baseDir: string, defaults: RouteDefaultsConfig): RoutesConfig {
+function normalizeRoutes(parsed: ParsedGatewayConfig["routes"], baseDir: string, defaults: RouteDefaultConfig): RoutesConfig {
   const items: Record<string, RouteProfile> = {};
   for (const [routeId, profile] of Object.entries(parsed.items)) {
     items[routeId] = normalizeRouteProfile(routeId, baseDir, profile, defaults);
   }
 
   return {
-    defaults,
+    default: defaults,
     items,
   };
 }
@@ -257,18 +257,18 @@ function validateReferences(parsed: ParsedGatewayConfig, normalizedRoutes: Route
     throw new Error(`sandboxes.default '${defaultSandbox}' does not exist in sandboxes.items`);
   }
 
-  const resolvedDefaults: RouteDefaultsConfig = {
-    provider: parsed.routes.defaults.provider ?? parsed.providers.default,
-    sandbox: parsed.routes.defaults.sandbox ?? parsed.sandboxes.default ?? BUILTIN_HOST_SANDBOX_ID,
-    tools: parsed.routes.defaults.tools ?? "full",
-    mentions: parsed.routes.defaults.mentions ?? "required",
+  const resolvedDefaults: RouteDefaultConfig = {
+    provider: parsed.routes.default.provider ?? parsed.providers.default,
+    sandbox: parsed.routes.default.sandbox ?? parsed.sandboxes.default ?? BUILTIN_HOST_SANDBOX_ID,
+    tools: parsed.routes.default.tools ?? "full",
+    mentions: parsed.routes.default.mentions ?? "required",
   };
 
   if (!parsed.providers.items[resolvedDefaults.provider]) {
-    throw new Error(`routes.defaults.provider references unknown provider '${resolvedDefaults.provider}'`);
+    throw new Error(`routes.default.provider references unknown provider '${resolvedDefaults.provider}'`);
   }
   if (resolvedDefaults.sandbox !== BUILTIN_HOST_SANDBOX_ID && !parsed.sandboxes.items[resolvedDefaults.sandbox]) {
-    throw new Error(`routes.defaults.sandbox references unknown sandbox '${resolvedDefaults.sandbox}'`);
+    throw new Error(`routes.default.sandbox references unknown sandbox '${resolvedDefaults.sandbox}'`);
   }
 
   for (const [routeId, profile] of Object.entries(normalizedRoutes.items)) {
@@ -311,12 +311,12 @@ export async function loadGatewayConfig(configPath: string): Promise<GatewayConf
   const parsed = gatewayConfigSchema.parse(JSON.parse(raw) as unknown);
   validateConnectorConfigKeys(parsed.connectors);
 
-  const routeDefaults: RouteDefaultsConfig = {
-    ...(parsed.routes.defaults.projectRoot ? { projectRoot: resolveMaybeAbsolute(configBaseDir, parsed.routes.defaults.projectRoot) } : {}),
-    provider: parsed.routes.defaults.provider ?? parsed.providers.default,
-    sandbox: parsed.routes.defaults.sandbox ?? parsed.sandboxes.default ?? BUILTIN_HOST_SANDBOX_ID,
-    tools: parsed.routes.defaults.tools ?? "full",
-    mentions: parsed.routes.defaults.mentions ?? "required",
+  const routeDefaults: RouteDefaultConfig = {
+    ...(parsed.routes.default.projectRoot ? { projectRoot: resolveMaybeAbsolute(configBaseDir, parsed.routes.default.projectRoot) } : {}),
+    provider: parsed.routes.default.provider ?? parsed.providers.default,
+    sandbox: parsed.routes.default.sandbox ?? parsed.sandboxes.default ?? BUILTIN_HOST_SANDBOX_ID,
+    tools: parsed.routes.default.tools ?? "full",
+    mentions: parsed.routes.default.mentions ?? "required",
   };
 
   const normalizedRoutes = normalizeRoutes(parsed.routes, configBaseDir, routeDefaults);
@@ -343,7 +343,7 @@ export async function loadGatewayConfig(configPath: string): Promise<GatewayConf
 }
 
 export class RouteResolver {
-  constructor(private readonly routes: RoutesConfig) {}
+  constructor(private readonly routes: RoutesConfig) { }
 
   resolve(routeId: string): RouteResolution | null {
     const normalizedRouteId = routeId.trim();

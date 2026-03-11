@@ -100,7 +100,7 @@ export interface NormalizedGatewayConfig extends RawGatewayConfig {
     [key: string]: unknown;
   };
   routes: {
-    defaults: RawRouteDefaults;
+    default: RawRouteDefaults;
     items: Record<string, RawRouteProfile>;
     [key: string]: unknown;
   };

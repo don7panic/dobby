@@ -176,8 +176,8 @@ export async function runInitCommand(): Promise<void> {
   };
   next.routes = {
     ...next.routes,
-    defaults: {
-      ...next.routes.defaults,
+    default: {
+      ...next.routes.default,
       ...selected.routeDefaults,
     },
   };

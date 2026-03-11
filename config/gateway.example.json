@@ -46,7 +46,7 @@
     "items": {}
   },
   "routes": {
-    "defaults": {
+    "default": {
       "projectRoot": "/Users/you/workspace/dobby",
       "provider": "pi.main",
       "sandbox": "host.builtin",

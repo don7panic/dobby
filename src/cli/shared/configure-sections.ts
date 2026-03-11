@@ -221,7 +221,7 @@ async function configureProviderSection(config: RawGatewayConfig, context?: Conf
       throw new Error("Configure cancelled.");
     }
     next.providers.default = String(defaultProvider);
-    next.routes.defaults.provider = String(defaultProvider);
+    next.routes.default.provider = String(defaultProvider);
   }
 
   Object.assign(config, next);
@@ -322,7 +322,7 @@ async function configureRouteSection(config: RawGatewayConfig): Promise<void> {
   const routeId = String(targetRoute) === "__new" ? await requiredText("New route ID", "main") : String(targetRoute);
   const existing = routeItems[routeId];
 
-  const defaultProjectRoot = next.routes.defaults.projectRoot;
+  const defaultProjectRoot = next.routes.default.projectRoot;
   let projectRoot = existing?.projectRoot;
   if (defaultProjectRoot) {
     const projectRootMode = await select({
@@ -347,7 +347,7 @@ async function configureRouteSection(config: RawGatewayConfig): Promise<void> {
   const tools = await select({
     message: "tools",
     options: [
-      { value: "__default", label: `Use route default (${next.routes.defaults.tools ?? "full"})` },
+      { value: "__default", label: `Use route default (${next.routes.default.tools ?? "full"})` },
       { value: "full", label: "full" },
       { value: "readonly", label: "readonly" },
     ],
@@ -361,7 +361,7 @@ async function configureRouteSection(config: RawGatewayConfig): Promise<void> {
   const mentions = await select({
     message: "mentions",
     options: [
-      { value: "__default", label: `Use route default (${next.routes.defaults.mentions ?? "required"})` },
+      { value: "__default", label: `Use route default (${next.routes.default.mentions ?? "required"})` },
       { value: "required", label: "required" },
       { value: "optional", label: "optional" },
     ],
@@ -377,7 +377,7 @@ async function configureRouteSection(config: RawGatewayConfig): Promise<void> {
     ? await select({
       message: "provider",
       options: [
-        { value: "__default", label: `Use route default (${(next.routes.defaults.provider ?? next.providers.default) || "(unset)"})` },
+        { value: "__default", label: `Use route default (${(next.routes.default.provider ?? next.providers.default) || "(unset)"})` },
         ...providerIds.map((id) => ({ value: id, label: id })),
       ],
       initialValue: existing?.provider ?? "__default",
@@ -392,7 +392,7 @@ async function configureRouteSection(config: RawGatewayConfig): Promise<void> {
   const sandboxValue = await select({
     message: "sandbox",
     options: [
-      { value: "__default", label: `Use route default (${next.routes.defaults.sandbox ?? next.sandboxes.default})` },
+      { value: "__default", label: `Use route default (${next.routes.default.sandbox ?? next.sandboxes.default})` },
       ...sandboxIds.map((id) => ({ value: id, label: id })),
     ],
     initialValue: existing?.sandbox ?? "__default",
@@ -545,7 +545,7 @@ async function configureSandboxSection(config: RawGatewayConfig): Promise<void> 
   }
 
   next.sandboxes.default = String(defaultSandbox);
-  next.routes.defaults.sandbox = String(defaultSandbox);
+  next.routes.default.sandbox = String(defaultSandbox);
   Object.assign(config, next);
 }
 
