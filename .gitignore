@@ -22,3 +22,4 @@ yarn-error.log*
 .env.*.local
 config/gateway.json
 config/models.custom.json
+config/gateway.local.json

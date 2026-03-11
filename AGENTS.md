@@ -68,7 +68,7 @@ npm run plugins:setup:local
 - `src/cli/commands/start.ts`
   - 启动网关、创建数据目录、加载扩展、实例化 provider / connector / sandbox、启动 cron 服务、接管优雅退出
 - `src/cli/commands/init.ts`
-  - 首次初始化向导；会先安装所需扩展，再根据扩展 `configSchema` 交互生成配置
+  - 首次初始化向导；会安装所需扩展并生成带占位符的 starter 配置模板
 - `src/cli/commands/config*.ts`
   - `config show|list|edit|schema *` 与 `configure`
 - `src/cli/commands/topology.ts`
@@ -111,8 +111,8 @@ npm run plugins:setup:local
 
 - `providers.default` 必须存在于 `providers.items`
 - `sandboxes.default` 若存在且不是 `host.builtin`，必须存在于 `sandboxes.items`
-- `routes.defaults.provider` 若未设置，运行时回落到 `providers.default`
-- `routes.defaults.sandbox` 若未设置，运行时回落到 `sandboxes.default ?? host.builtin`
+- `routes.default.provider` 若未设置，运行时回落到 `providers.default`
+- `routes.default.sandbox` 若未设置，运行时回落到 `sandboxes.default ?? host.builtin`
 - 每条 route 在加载后都会补全 `provider`、`sandbox`、`tools`、`mentions`
 - `bindings.items[*].connector` 必须指向存在的 `connectors.items`
 - `bindings.items[*].route` 必须指向存在的 `routes.items`
@@ -133,8 +133,8 @@ npm run plugins:setup:local
   - `connectorId + platform + accountId + chatId + messageId`
 - 线程路由规则：
   - Discord 线程消息使用父频道 ID 查 `bindings.items`
-- Discord connector 当前只处理已绑定的 guild channel
-  - DM 在 connector 侧被直接忽略，虽然核心类型保留了 `isDirectMessage`
+- Discord guild channel 仍按显式 binding 匹配
+  - DM 会携带 `isDirectMessage` 进入 gateway，并可通过 `bindings.default` 回落到默认 route
 - mention 策略：
   - `mentions="required"` 时，群聊消息必须 @bot 才会进入 runtime
 - 控制命令：
@@ -159,7 +159,7 @@ npm run plugins:setup:local
 - 运行时加载来源只有 `<data.rootDir>/extensions/node_modules`
 - 宿主不会从自身依赖树、`plugins/*` 源码目录或 `dist` 外路径 fallback
 - `configSchema` 是可选的
-  - `init`、`configure`、`config edit` 会优先按 schema 交互提问
+  - `configure`、`config edit` 会优先按 schema 交互提问
   - `applyAndValidateContributionSchemas` 会用 Ajv 套默认值并验证实例配置
 
 当前仓库内的扩展源码与 contribution：
@@ -172,7 +172,7 @@ npm run plugins:setup:local
 
 注意：
 
-- `dobby init` 当前只内建选择 `provider.pi`、`provider.claude-cli` 和 `connector.discord`
+- `dobby init` 当前只内建选择 `provider.pi`、`provider.claude-cli`、`connector.discord` 和 `connector.feishu`
 - `provider.claude` 与 sandbox 扩展需要手工安装 / 启用 / 配置
 
 ## 7. Cron / 计划任务约束

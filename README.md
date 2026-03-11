@@ -87,7 +87,7 @@ npm run start -- init
 - 交互选择 provider 和 connector（均可多选）
 - 自动安装所选扩展到运行时 extension store
 - 写入一份带占位符的 `gateway.json` 模板
-- 把 `routes.defaults.projectRoot` 设为当前工作目录
+- 把 `routes.default.projectRoot` 设为当前工作目录
 - 为 direct message 生成 `bindings.default`，回落到默认 route
 - 为每个所选 connector 生成一个默认 binding 到同一条 route
 - 生成 `gateway.json`
@@ -233,7 +233,7 @@ dobby cron remove <jobId>
   - 默认 provider instance ID
 - `providers.items[*].type` / `connectors.items[*].type` / `sandboxes.items[*].type`
   - 指向某个 contribution，实例配置直接内联在对象里
-- `routes.defaults`
+- `routes.default`
   - 统一提供 route 默认的 `projectRoot`、`provider`、`sandbox`、`tools`、`mentions`
 - `routes.items[*]`
   - route 是可复用的执行 profile，可继承默认 `projectRoot`，并按需覆盖 `provider`、`sandbox`、`tools`、`mentions`、`systemPromptFile`

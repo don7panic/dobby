@@ -48,7 +48,6 @@ export interface InitSelectionContext {
 export interface InitSelectionResult {
   providerChoiceIds: InitProviderChoiceId[];
   routeProviderChoiceId: InitProviderChoiceId;
-  providerChoiceId: InitProviderChoiceId;
   connectorChoiceIds: InitConnectorChoiceId[];
   extensionPackages: string[];
   providerInstances: Array<{
@@ -64,8 +63,6 @@ export interface InitSelectionResult {
     config: Record<string, unknown>;
   }>;
   providerInstanceId: string;
-  providerContributionId: string;
-  providerConfig: Record<string, unknown>;
   routeId: string;
   routeDefaults: RawRouteDefaults;
   routeProfile: RawRouteProfile;
@@ -205,7 +202,6 @@ export function createInitSelectionConfig(
   return {
     providerChoiceIds: dedupedProviderChoiceIds,
     routeProviderChoiceId: primaryProviderChoice.id,
-    providerChoiceId: primaryProviderChoice.id,
     connectorChoiceIds: dedupedConnectorChoiceIds,
     extensionPackages: [
       ...new Set([
@@ -226,8 +222,6 @@ export function createInitSelectionConfig(
       config: structuredClone(connectorChoice.defaultConfig),
     })),
     providerInstanceId: primaryProviderChoice.instanceId,
-    providerContributionId: primaryProviderChoice.contributionId,
-    providerConfig: structuredClone(primaryProviderChoice.defaultConfig),
     routeId: DEFAULT_INIT_ROUTE_ID,
     routeDefaults: {
       projectRoot: context.defaultProjectRoot ?? DEFAULT_INIT_PROJECT_ROOT,

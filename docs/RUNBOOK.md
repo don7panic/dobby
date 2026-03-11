@@ -71,9 +71,8 @@ cp config/gateway.example.json config/gateway.json
 ```
 
 说明：
-1. 若你使用 `dobby init` 并选择了 `provider.pi`，`models.custom.json` 会在缺失时自动生成。
-2. `dobby init` 生成的是模板配置；写入后需要先替换 `gateway.json` 里的占位值。
-3. 手动维护配置时，仍可参考 `config/models.custom.example.json`。
+1. `dobby init` 生成的是模板配置；写入后需要先替换 `gateway.json` 里的占位值。
+2. 手动维护配置时，仍可参考 `config/gateway.example.json`。
 
 ### 4.1 CLI config 命令
 
@@ -108,8 +107,8 @@ dobby config schema show <contributionId> [--json]
 3. `connectors.items`：至少有一个 connector 实例。
 4. `routes.items.*.projectRoot`：改成你机器上的真实目录。
 5. `bindings.items.*`：为每个入口声明 `(connector, source.type, source.id) -> route`。
-6. `routes.items.*.provider`：可省略；省略时走 `routes.defaults.provider`。
-7. `routes.items.*.sandbox`：可省略；省略时走 `routes.defaults.sandbox`。
+6. `routes.items.*.provider`：可省略；省略时走 `routes.default.provider`。
+7. `routes.items.*.sandbox`：可省略；省略时走 `routes.default.sandbox`。
 
 默认 sandbox：
 1. 全局默认是 `sandboxes.default = "host.builtin"`。
@@ -230,7 +229,7 @@ npm run start:local --
    - 这是 `dobby init` 生成的模板占位值还没替换。直接编辑 `gateway.json`，改成你的真实 token / appId / appSecret / channelId / chatId / projectRoot。
 
 3. `Configured model 'provider/model' not found`
-   - 检查 provider 实例中的 `provider/model/modelsFile` 是否和 `config/models.custom.json` 一致。
+   - 检查 provider 实例中的 `provider` / `model` 配置是否有效；对 `provider.pi`，还要确认 `models` 内联列表里包含该 model。
 
 4. `Extension package 'xxx' is not installed in '.../data/extensions'`
    - 先执行 `npm run start -- extension install <package>`。
