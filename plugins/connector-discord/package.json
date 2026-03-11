@@ -1,6 +1,6 @@
 {
   "name": "@dobby.ai/connector-discord",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": false,
   "type": "module",
   "description": "Built-in Discord connector extension package",
