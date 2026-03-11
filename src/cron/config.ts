@@ -27,7 +27,7 @@ const rawCronConfigSchema = z.object({
   storeFile: z.string().min(1).optional(),
   runLogFile: z.string().min(1).optional(),
   pollIntervalMs: z.number().int().positive().default(10_000),
-  maxConcurrentRuns: z.number().int().positive().default(1),
+  maxConcurrentRuns: z.number().int().positive().default(2),
   runMissedOnStartup: z.boolean().default(true),
   jobTimeoutMs: z.number().int().positive().default(10 * 60 * 1000),
 });
@@ -73,7 +73,7 @@ function defaultCronConfigPayload(): RawCronConfig {
     storeFile: "./data/state/cron-jobs.json",
     runLogFile: "./data/state/cron-runs.jsonl",
     pollIntervalMs: 10_000,
-    maxConcurrentRuns: 1,
+    maxConcurrentRuns: 2,
     runMissedOnStartup: true,
     jobTimeoutMs: 10 * 60 * 1000,
   };

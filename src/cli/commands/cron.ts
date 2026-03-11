@@ -3,7 +3,7 @@ import type { GatewayConfig } from "../../core/types.js";
 import { loadCronConfig } from "../../cron/config.js";
 import { computeInitialNextRunAtMs, describeSchedule } from "../../cron/schedule.js";
 import { CronStore } from "../../cron/store.js";
-import type { CronSessionPolicy, JobSchedule, ScheduledJob } from "../../cron/types.js";
+import type { JobSchedule, ScheduledJob } from "../../cron/types.js";
 import { resolveConfigPath } from "../shared/config-io.js";
 import { createLogger } from "../shared/runtime.js";
 
@@ -63,16 +63,6 @@ function parseSchedule(input: ScheduleInput): JobSchedule {
   };
 }
 
-function parseSessionPolicy(value: CronSessionPolicy | string | undefined): CronSessionPolicy | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === "stateless" || value === "shared-session") {
-    return value;
-  }
-  throw new Error(`Invalid session policy '${value}'. Expected 'stateless' or 'shared-session'.`);
-}
-
 function assertDeliveryReferences(
   config: GatewayConfig,
   input: {
@@ -116,7 +106,6 @@ export async function runCronAddCommand(options: {
   routeId: string;
   channelId: string;
   threadId?: string;
-  sessionPolicy?: CronSessionPolicy;
   at?: string;
   everyMs?: number;
   cronExpr?: string;
@@ -140,14 +129,12 @@ export async function runCronAddCommand(options: {
   const now = Date.now();
   const nextRunAtMs = computeInitialNextRunAtMs(schedule, now);
   const id = `${slugify(options.name)}-${Math.random().toString(36).slice(2, 8)}`;
-  const sessionPolicy = parseSessionPolicy(options.sessionPolicy) ?? "stateless";
 
   const job: ScheduledJob = {
     id,
     name: options.name,
     enabled: true,
     schedule,
-    sessionPolicy,
     prompt: options.prompt,
     delivery: {
       connectorId: options.connectorId,
@@ -197,6 +184,9 @@ export async function runCronListCommand(options: {
     console.log(`- ${job.id} [${job.enabled ? "enabled" : "paused"}] ${job.name}`);
     console.log(`  schedule=${schedule}`);
     console.log(`  next=${next} last=${last} status=${job.state.lastStatus ?? "-"}`);
+    if (job.state.manualRunRequestedAtMs !== undefined) {
+      console.log(`  manualRun=${new Date(job.state.manualRunRequestedAtMs).toISOString()}`);
+    }
     console.log(`  delivery=${job.delivery.connectorId}/${job.delivery.routeId}/${job.delivery.channelId}`);
   }
 }
@@ -229,10 +219,12 @@ export async function runCronStatusCommand(options: {
     console.log(`- name: ${target.name}`);
     console.log(`- enabled: ${target.enabled}`);
     console.log(`- schedule: ${describeSchedule(target.schedule)}`);
-    console.log(`- sessionPolicy: ${target.sessionPolicy ?? "stateless"}`);
     console.log(`- nextRun: ${target.state.nextRunAtMs ? new Date(target.state.nextRunAtMs).toISOString() : "-"}`);
     console.log(`- lastRun: ${target.state.lastRunAtMs ? new Date(target.state.lastRunAtMs).toISOString() : "-"}`);
     console.log(`- lastStatus: ${target.state.lastStatus ?? "-"}`);
+    if (target.state.manualRunRequestedAtMs !== undefined) {
+      console.log(`- manualRunQueuedAt: ${new Date(target.state.manualRunRequestedAtMs).toISOString()}`);
+    }
     if (target.state.lastError) {
       console.log(`- lastError: ${target.state.lastError}`);
     }
@@ -255,14 +247,14 @@ export async function runCronRunCommand(options: {
   const now = Date.now();
   await context.store.updateJob(options.jobId, (current) => ({
     ...current,
-    enabled: true,
     updatedAtMs: now,
     state: {
       ...current.state,
-      nextRunAtMs: now,
+      manualRunRequestedAtMs: current.state.manualRunRequestedAtMs ?? now,
     },
   }));
-  console.log(`Scheduled cron job ${options.jobId} to run on next scheduler tick.`);
+  console.log(`Queued one manual run for cron job ${options.jobId}.`);
+  console.log("It will execute once without changing the job's enabled state or next scheduled run.");
   console.log("Ensure the gateway process is running for execution.");
 }
 
@@ -275,7 +267,6 @@ export async function runCronUpdateCommand(options: {
   channelId?: string;
   threadId?: string;
   clearThread?: boolean;
-  sessionPolicy?: CronSessionPolicy;
   at?: string;
   everyMs?: number;
   cronExpr?: string;
@@ -286,15 +277,10 @@ export async function runCronUpdateCommand(options: {
     options.cronConfigPath ? { cronConfigPath: options.cronConfigPath } : undefined,
   );
   const now = Date.now();
-  const hasScheduleUpdate = options.at !== undefined || options.everyMs !== undefined || options.cronExpr !== undefined;
-  const nextSchedule = hasScheduleUpdate
-    ? parseSchedule({
-      ...(options.at ? { at: options.at } : {}),
-      ...(options.everyMs !== undefined ? { everyMs: options.everyMs } : {}),
-      ...(options.cronExpr ? { cronExpr: options.cronExpr } : {}),
-      ...(options.tz ? { tz: options.tz } : {}),
-    })
-    : null;
+  const hasScheduleUpdate = options.at !== undefined
+    || options.everyMs !== undefined
+    || options.cronExpr !== undefined
+    || options.tz !== undefined;
 
   await context.store.updateJob(options.jobId, (current) => {
     const updatedDelivery: ScheduledJob["delivery"] = {
@@ -312,14 +298,37 @@ export async function runCronUpdateCommand(options: {
       routeId: updatedDelivery.routeId,
     });
 
-    const schedule = nextSchedule ?? current.schedule;
-    const nextRunAtMs = nextSchedule
+    let schedule = current.schedule;
+    if (hasScheduleUpdate) {
+      const hasExplicitScheduleVariant = options.at !== undefined
+        || options.everyMs !== undefined
+        || options.cronExpr !== undefined;
+      if (hasExplicitScheduleVariant) {
+        schedule = parseSchedule({
+          ...(options.at ? { at: options.at } : {}),
+          ...(options.everyMs !== undefined ? { everyMs: options.everyMs } : {}),
+          ...(options.cronExpr ? { cronExpr: options.cronExpr } : {}),
+          ...(options.tz ? { tz: options.tz } : {}),
+        });
+      } else if (options.tz !== undefined) {
+        if (current.schedule.kind !== "cron") {
+          throw new Error("--tz can only be updated for cron schedules or together with --cron");
+        }
+        schedule = {
+          kind: "cron",
+          expr: current.schedule.expr,
+          ...(options.tz ? { tz: options.tz } : {}),
+        };
+      }
+    }
+
+    const nextRunAtMs = hasScheduleUpdate
       ? computeInitialNextRunAtMs(schedule, now)
       : current.state.nextRunAtMs;
     const nextState = {
       ...current.state,
     };
-    if (nextSchedule) {
+    if (hasScheduleUpdate) {
       if (nextRunAtMs === undefined) {
         delete nextState.nextRunAtMs;
       } else {
@@ -327,7 +336,6 @@ export async function runCronUpdateCommand(options: {
       }
     }
 
-    const parsedSessionPolicy = parseSessionPolicy(options.sessionPolicy);
     const nextJob: ScheduledJob = {
       ...current,
       name: options.name ?? current.name,
@@ -337,13 +345,6 @@ export async function runCronUpdateCommand(options: {
       updatedAtMs: now,
       state: nextState,
     };
-    const nextSessionPolicy = parsedSessionPolicy ?? current.sessionPolicy;
-    if (nextSessionPolicy !== undefined) {
-      nextJob.sessionPolicy = nextSessionPolicy;
-    } else {
-      delete nextJob.sessionPolicy;
-    }
-
     return nextJob;
   });
 

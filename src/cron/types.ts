@@ -1,5 +1,3 @@
-export type CronSessionPolicy = "stateless" | "shared-session";
-
 export type JobSchedule =
   | { kind: "at"; at: string }
   | { kind: "every"; everyMs: number }
@@ -14,6 +12,7 @@ export interface JobDelivery {
 
 export interface ScheduledJobState {
   nextRunAtMs?: number | undefined;
+  manualRunRequestedAtMs?: number | undefined;
   runningAtMs?: number | undefined;
   lastRunAtMs?: number | undefined;
   lastStatus?: "ok" | "error" | "skipped" | undefined;
@@ -26,7 +25,6 @@ export interface ScheduledJob {
   name: string;
   enabled: boolean;
   schedule: JobSchedule;
-  sessionPolicy?: CronSessionPolicy | undefined;
   prompt: string;
   delivery: JobDelivery;
   createdAtMs: number;

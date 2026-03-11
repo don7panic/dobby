@@ -77,6 +77,13 @@ test("cron help shows core subcommands", () => {
   assert.match(help, /list \[options\]/);
   assert.match(help, /run \[options\] <jobId>/);
   assert.match(help, /remove \[options\] <jobId>/);
+
+  const addCommand = cronCommand.commands.find((command) => command.name() === "add");
+  const updateCommand = cronCommand.commands.find((command) => command.name() === "update");
+  assert.ok(addCommand);
+  assert.ok(updateCommand);
+  assert.equal(addCommand.helpInformation().includes("session-policy"), false);
+  assert.equal(updateCommand.helpInformation().includes("session-policy"), false);
 });
 
 test("top-level help keeps bootstrap, inspect, install, validate, and ops commands only", () => {

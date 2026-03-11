@@ -198,7 +198,6 @@ npm run plugins:setup:local
   - 所有 scheduled run 都走 `Gateway.handleScheduled`
   - conversation key 固定为 `cron:<runId>`
   - runtime 始终按 `stateless + ephemeral` 执行
-  - `cron` CLI / store 虽然有 `sessionPolicy` 字段，但当前调度路径没有把它传到运行时
 
 ## 8. 文档和代码改动建议
 
@@ -257,11 +256,10 @@ npm run extensions:list:local
 2. 在映射频道 @bot 发消息，确认流式更新与 typing
 3. 发送 `stop` 或 `/cancel`，确认能取消当前会话
 4. 发送 `/new` 或 `/reset`，确认会话被重置且 provider 归档成功
-5. 若启用 cron，执行 `dobby cron run <jobId>` 并确认正在运行的 gateway 会在下一次 scheduler tick 执行任务
+5. 若启用 cron，执行 `dobby cron run <jobId>` 并确认正在运行的 gateway 会额外排队一次立即执行任务
 
 ## 10. 当前已知边界
 
 - 有一批 focused tests，但仍缺少端到端自动化测试
-- cron job 的 `sessionPolicy` 目前是 schema / CLI 字段，调度执行时未生效
 - Discord connector 仍不处理 DM
 - `extension uninstall` 不会自动清理 `gateway.json` 中的 allowList 和实例引用

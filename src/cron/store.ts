@@ -25,7 +25,6 @@ const scheduledJobSchema: z.ZodType<ScheduledJob> = z.object({
   name: z.string().min(1),
   enabled: z.boolean(),
   schedule: jobScheduleSchema,
-  sessionPolicy: z.enum(["stateless", "shared-session"]).optional(),
   prompt: z.string(),
   delivery: z.object({
     connectorId: z.string().min(1),
@@ -37,6 +36,7 @@ const scheduledJobSchema: z.ZodType<ScheduledJob> = z.object({
   updatedAtMs: z.number().int().nonnegative(),
   state: z.object({
     nextRunAtMs: z.number().int().nonnegative().optional(),
+    manualRunRequestedAtMs: z.number().int().nonnegative().optional(),
     runningAtMs: z.number().int().nonnegative().optional(),
     lastRunAtMs: z.number().int().nonnegative().optional(),
     lastStatus: z.enum(["ok", "error", "skipped"]).optional(),

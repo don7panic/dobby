@@ -156,7 +156,7 @@ flowchart TD
   "storeFile": "./data/state/cron-jobs.json",
   "runLogFile": "./data/state/cron-runs.jsonl",
   "pollIntervalMs": 10000,
-  "maxConcurrentRuns": 1,
+  "maxConcurrentRuns": 2,
   "runMissedOnStartup": true,
   "jobTimeoutMs": 600000
 }
@@ -188,7 +188,6 @@ type ScheduledJob = {
   name: string;
   enabled: boolean;
   schedule: JobSchedule;
-  sessionPolicy?: "stateless" | "shared-session"; // default: stateless
   prompt: string;
   delivery: JobDelivery;
   createdAtMs: number;
@@ -268,7 +267,7 @@ v1 建议实现以下最小鲁棒性（借鉴 openclaw）：
 1. `dobby cron add`
 2. `dobby cron list`
 3. `dobby cron status`
-4. `dobby cron run <id>`
+4. `dobby cron run <id>`（额外排队一次立即执行，不改变 pause / resume 状态）
 5. `dobby cron update <id>`
 6. `dobby cron remove <id>`
 7. `dobby cron pause/resume <id>`

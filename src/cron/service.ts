@@ -14,13 +14,14 @@ interface CronServiceOptions {
 interface ScheduledRunContext {
   runId: string;
   jobId: string;
-  scheduledAtMs: number;
+  trigger: "schedule" | "manual";
 }
 
 export class CronService {
   private timer: NodeJS.Timeout | null = null;
   private readonly activeRuns = new Map<string, Promise<void>>();
   private tickInFlight = false;
+  private tickRequested = false;
   private started = false;
   private stopping = false;
 
@@ -43,7 +44,7 @@ export class CronService {
     const intervalMs = Math.min(this.options.config.pollIntervalMs, 60_000);
     await this.tick();
     this.timer = setInterval(() => {
-      void this.tick();
+      this.requestTick();
     }, intervalMs);
 
     this.started = true;
@@ -122,50 +123,78 @@ export class CronService {
       return;
     }
     if (this.tickInFlight) {
+      this.tickRequested = true;
       return;
     }
 
     this.tickInFlight = true;
     try {
-      // Reload from disk on every tick so CLI mutations (cron run/update/pause/resume)
-      // made by a separate process become visible to the long-running scheduler.
-      await this.options.store.load();
+      do {
+        this.tickRequested = false;
 
-      const now = Date.now();
-      const dueJobs = this.options.store.listJobs().filter((job) =>
-        job.enabled
-        && job.state.runningAtMs === undefined
-        && job.state.nextRunAtMs !== undefined
-        && job.state.nextRunAtMs <= now
-      );
+        // Reload from disk on every tick so CLI mutations (cron run/update/pause/resume)
+        // made by a separate process become visible to the long-running scheduler.
+        await this.options.store.load();
 
-      for (const job of dueJobs) {
-        if (this.activeRuns.size >= this.options.config.maxConcurrentRuns) {
-          break;
+        const now = Date.now();
+        const dueJobs = this.options.store.listJobs()
+          .filter((job) =>
+            job.state.runningAtMs === undefined
+            && this.dueAtMs(job, now) !== undefined,
+          )
+          .sort((a, b) => {
+            const leftDueAt = this.dueAtMs(a, now) ?? Number.MAX_SAFE_INTEGER;
+            const rightDueAt = this.dueAtMs(b, now) ?? Number.MAX_SAFE_INTEGER;
+            return leftDueAt - rightDueAt || a.createdAtMs - b.createdAtMs || a.id.localeCompare(b.id);
+          });
+
+        for (const job of dueJobs) {
+          if (this.activeRuns.size >= this.options.config.maxConcurrentRuns) {
+            break;
+          }
+          await this.enqueueJob(job, now);
         }
-        await this.enqueueJob(job, now);
-      }
+      } while (this.tickRequested && !this.stopping && this.options.config.enabled);
     } finally {
       this.tickInFlight = false;
     }
   }
 
   private async enqueueJob(job: ScheduledJob, now: number): Promise<void> {
-    const scheduledAtMs = job.state.nextRunAtMs ?? now;
+    const scheduledAtMs = job.enabled
+      && job.state.nextRunAtMs !== undefined
+      && job.state.nextRunAtMs <= now
+      ? job.state.nextRunAtMs
+      : undefined;
+    const manualRequestedAtMs = job.state.manualRunRequestedAtMs !== undefined
+      && job.state.manualRunRequestedAtMs <= now
+      ? job.state.manualRunRequestedAtMs
+      : undefined;
+    const trigger = scheduledAtMs !== undefined ? "schedule" : "manual";
+    const triggerAtMs = scheduledAtMs ?? manualRequestedAtMs ?? now;
+    const consumeManualRequest = manualRequestedAtMs !== undefined;
     const runContext: ScheduledRunContext = {
-      runId: `${job.id}:${scheduledAtMs}`,
+      runId: `${job.id}:${trigger}:${triggerAtMs}`,
       jobId: job.id,
-      scheduledAtMs,
+      trigger,
     };
 
-    await this.options.store.updateJob(job.id, (current) => ({
-      ...current,
-      updatedAtMs: now,
-      state: {
+    await this.options.store.updateJob(job.id, (current) => {
+      const nextState = {
         ...current.state,
         runningAtMs: now,
-      },
-    }));
+      };
+
+      if (consumeManualRequest) {
+        delete nextState.manualRunRequestedAtMs;
+      }
+
+      return {
+        ...current,
+        updatedAtMs: now,
+        state: nextState,
+      };
+    });
 
     const runPromise = this.executeJobRun(runContext)
       .catch((error) => {
@@ -176,6 +205,7 @@ export class CronService {
       })
       .finally(() => {
         this.activeRuns.delete(runContext.runId);
+        this.requestTick();
       });
 
     this.activeRuns.set(runContext.runId, runPromise);
@@ -210,6 +240,20 @@ export class CronService {
     const endedAtMs = Date.now();
     await this.options.store.updateJob(job.id, (current) => {
       const isSuccess = status === "ok";
+      if (run.trigger === "manual") {
+        return {
+          ...current,
+          updatedAtMs: endedAtMs,
+          state: {
+            ...current.state,
+            runningAtMs: undefined,
+            lastRunAtMs: endedAtMs,
+            lastStatus: isSuccess ? "ok" : "error",
+            lastError: isSuccess ? undefined : errorMessage,
+          },
+        };
+      }
+
       const previousErrors = current.state.consecutiveErrors ?? 0;
       const nextErrorCount = isSuccess ? 0 : previousErrors + 1;
 
@@ -245,5 +289,35 @@ export class CronService {
       ...(errorMessage ? { error: errorMessage } : {}),
     };
     await this.options.store.appendRunLog(runRecord);
+  }
+
+  private dueAtMs(job: ScheduledJob, now: number): number | undefined {
+    const scheduledAtMs = job.enabled
+      && job.state.nextRunAtMs !== undefined
+      && job.state.nextRunAtMs <= now
+      ? job.state.nextRunAtMs
+      : undefined;
+    if (scheduledAtMs !== undefined) {
+      return scheduledAtMs;
+    }
+
+    if (job.state.manualRunRequestedAtMs !== undefined && job.state.manualRunRequestedAtMs <= now) {
+      return job.state.manualRunRequestedAtMs;
+    }
+
+    return undefined;
+  }
+
+  private requestTick(): void {
+    if (this.stopping || !this.options.config.enabled) {
+      return;
+    }
+
+    if (this.tickInFlight) {
+      this.tickRequested = true;
+      return;
+    }
+
+    void this.tick();
   }
 }

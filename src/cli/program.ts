@@ -173,7 +173,6 @@ export function buildProgram(): Command {
     .requiredOption("--route <id>", "Route ID")
     .requiredOption("--channel <id>", "Delivery channel/chat ID")
     .option("--thread <id>", "Delivery thread ID")
-    .option("--session-policy <policy>", "Session policy: stateless|shared-session", "stateless")
     .option("--at <iso>", "Run once at ISO timestamp")
     .option("--every-ms <ms>", "Run at fixed interval in milliseconds")
     .option("--cron <expr>", "Cron expression")
@@ -188,7 +187,6 @@ export function buildProgram(): Command {
         routeId: opts.route as string,
         channelId: opts.channel as string,
         ...(typeof opts.thread === "string" ? { threadId: opts.thread as string } : {}),
-        sessionPolicy: opts.sessionPolicy as "stateless" | "shared-session",
         ...(typeof opts.at === "string" ? { at: opts.at as string } : {}),
         ...(parsedEveryMs !== null && Number.isFinite(parsedEveryMs) ? { everyMs: parsedEveryMs } : {}),
         ...(typeof opts.cron === "string" ? { cronExpr: opts.cron as string } : {}),
@@ -246,7 +244,6 @@ export function buildProgram(): Command {
     .option("--channel <id>", "Delivery channel/chat ID")
     .option("--thread <id>", "Delivery thread ID")
     .option("--clear-thread", "Unset delivery thread", false)
-    .option("--session-policy <policy>", "Session policy: stateless|shared-session")
     .option("--at <iso>", "Run once at ISO timestamp")
     .option("--every-ms <ms>", "Run at fixed interval in milliseconds")
     .option("--cron <expr>", "Cron expression")
@@ -263,9 +260,6 @@ export function buildProgram(): Command {
         ...(typeof opts.channel === "string" ? { channelId: opts.channel as string } : {}),
         ...(typeof opts.thread === "string" ? { threadId: opts.thread as string } : {}),
         clearThread: Boolean(opts.clearThread),
-        ...(typeof opts.sessionPolicy === "string"
-          ? { sessionPolicy: opts.sessionPolicy as "stateless" | "shared-session" }
-          : {}),
         ...(typeof opts.at === "string" ? { at: opts.at as string } : {}),
         ...(parsedEveryMs !== null && Number.isFinite(parsedEveryMs) ? { everyMs: parsedEveryMs } : {}),
         ...(typeof opts.cron === "string" ? { cronExpr: opts.cron as string } : {}),

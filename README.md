@@ -245,10 +245,6 @@ dobby cron remove <jobId>
   - 未指定时默认使用 `host.builtin`
 - 未匹配 binding 的入站消息会被直接忽略；仅 direct message 可回落到 `bindings.default`
 
-当前代码还保留但未真正生效的字段：
-
-- cron job 的 `sessionPolicy`
-
 示例配置：
 
 - gateway：[`config/gateway.example.json`](config/gateway.example.json)
@@ -323,7 +319,7 @@ npm run start -- cron add daily-report \
 
 说明：
 
-- `cron run <jobId>` 只是把 job 标记为“下一次 scheduler tick 执行”
+- `cron run <jobId>` 会额外排队一次立即执行，不会恢复 paused 状态，也不会改写原有 `nextRunAtMs`
 - 需要已有一个正在运行的 `dobby start`
 - 当前 scheduled run 一律按 stateless / ephemeral 执行
 
