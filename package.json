@@ -7,6 +7,9 @@
   "bin": {
     "dobby": "dist/src/main.js"
   },
+  "files": [
+    "dist/src/"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },
@@ -14,7 +17,8 @@
     "dev": "tsx watch src/main.ts",
     "dev:local": "node --env-file-if-exists=.env --import tsx --watch src/main.ts",
     "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "start": "node dist/src/main.js",
     "start:local": "node --env-file-if-exists=.env dist/src/main.js",
     "check": "tsc --noEmit",
@@ -24,7 +28,9 @@
     "plugins:build": "node scripts/local-extensions.mjs build",
     "extensions:install:local": "node scripts/local-extensions.mjs install-store",
     "extensions:list:local": "node scripts/local-extensions.mjs list-store",
-    "plugins:setup:local": "node scripts/local-extensions.mjs setup"
+    "plugins:setup:local": "node scripts/local-extensions.mjs setup",
+    "publish:release": "node scripts/publish-packages.mjs",
+    "publish:release:dry-run": "node scripts/publish-packages.mjs --dry-run"
   },
   "dependencies": {
     "@clack/prompts": "^0.10.1",
