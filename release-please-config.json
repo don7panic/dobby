@@ -1,0 +1,52 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "49a5cd74b0c1f1e1ce156dc7c0f35c9be03cd2a4",
+  "include-component-in-tag": true,
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "component": "dobby",
+      "package-name": "@dobby.ai/dobby"
+    },
+    "plugins/plugin-sdk": {
+      "release-type": "node",
+      "component": "plugin-sdk",
+      "package-name": "@dobby.ai/plugin-sdk"
+    },
+    "plugins/connector-discord": {
+      "release-type": "node",
+      "component": "connector-discord",
+      "package-name": "@dobby.ai/connector-discord"
+    },
+    "plugins/connector-feishu": {
+      "release-type": "node",
+      "component": "connector-feishu",
+      "package-name": "@dobby.ai/connector-feishu"
+    },
+    "plugins/provider-pi": {
+      "release-type": "node",
+      "component": "provider-pi",
+      "package-name": "@dobby.ai/provider-pi"
+    },
+    "plugins/provider-codex-cli": {
+      "release-type": "node",
+      "component": "provider-codex-cli",
+      "package-name": "@dobby.ai/provider-codex-cli"
+    },
+    "plugins/provider-claude-cli": {
+      "release-type": "node",
+      "component": "provider-claude-cli",
+      "package-name": "@dobby.ai/provider-claude-cli"
+    },
+    "plugins/provider-claude": {
+      "release-type": "node",
+      "component": "provider-claude",
+      "package-name": "@dobby.ai/provider-claude"
+    },
+    "plugins/sandbox-core": {
+      "release-type": "node",
+      "component": "sandbox-core",
+      "package-name": "@dobby.ai/sandbox-core"
+    }
+  }
+}

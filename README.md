@@ -214,6 +214,37 @@ dobby cron resume <jobId>
 dobby cron remove <jobId>
 ```
 
+## Release 流程
+
+仓库现在内置了两条 GitHub Actions：
+
+- `.github/workflows/ci.yml`
+  - 在 PR / push 到 `main` 时执行 `npm ci`、`npm run plugins:install`、`npm run check`、`npm run build`、`npm run test:cli`、`npm run plugins:check`、`npm run plugins:build`
+- `.github/workflows/release.yml`
+  - 在 push 到 `main` 时运行 Release Please
+  - 有 releasable commit 时自动维护 release PR
+  - release PR 合并后自动发布对应 npm 包，并为每个包生成独立 GitHub release / tag
+
+推荐的日常流程：
+
+1. 正常提交功能改动到 PR（建议继续使用 Conventional Commits 风格，例如 `feat(...)` / `fix(...)`）
+2. 合并到 `main`
+3. 等待 Release Please 自动更新或创建 release PR
+4. review 并合并 release PR
+5. 合并后由 `release.yml` 自动执行 npm trusted publishing
+
+注意：
+
+- 首次启用前，需要在 npm 后台为每个 `@dobby.ai/*` 包配置 GitHub trusted publisher，指向当前仓库和 `.github/workflows/release.yml`
+- 建议在 GitHub 仓库里创建 `npm-publish` environment，后续若需要人工审批可以直接加保护规则
+- 进入自动发版流程后，后续版本号应由 Release Please 维护，不再手动执行 `npm version`
+- 本地手动兜底发布仍然保留，可用：
+
+```bash
+node scripts/publish-packages.mjs --package plugins/provider-codex-cli --skip-existing
+node scripts/publish-packages.mjs --package . --tag next
+```
+
 ## Gateway 配置模型
 
 顶层结构：

@@ -254,3 +254,34 @@ npm run start:local --
    - 检查入口是否已经写进 `bindings.items`。
    - 检查是否需要 @bot（`mentions="required"`）。
    - 检查 bot 在频道内的读写权限与消息内容权限。
+
+## 12. 发版流程
+
+仓库现在默认走 GitHub Actions 自动发版：
+
+1. `.github/workflows/ci.yml`
+   - PR / push 到 `main` 时执行完整校验
+2. `.github/workflows/release.yml`
+   - push 到 `main` 后由 Release Please 维护 release PR
+   - release PR 合并后自动发布对应 npm 包
+
+首次启用前需要做两项仓库外配置：
+
+1. 在 npm 为每个 `@dobby.ai/*` 包配置 trusted publisher，workflow 指向 `.github/workflows/release.yml`
+2. 在 GitHub 创建 `npm-publish` environment（可选，但建议后续把 npm 发版审批挂在这里）
+
+日常操作建议：
+
+1. 功能 PR 保持 `feat(...)` / `fix(...)` / `deps(...)` 这类可被 Release Please 识别的提交风格
+2. 合并业务 PR 到 `main`
+3. 等待或手动触发 `release.yml`
+4. review Release Please 生成的 release PR
+5. 合并 release PR，等待 workflow 自动 publish
+
+若需要本地手动兜底：
+
+```bash
+node scripts/publish-packages.mjs --package plugins/plugin-sdk --skip-existing
+node scripts/publish-packages.mjs --package plugins/provider-codex-cli --tag next
+node scripts/publish-packages.mjs --package . --dry-run --allow-dirty
+```

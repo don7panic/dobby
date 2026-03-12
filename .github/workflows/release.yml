@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      root_release_created: ${{ steps.release.outputs.release_created }}
+      plugin_sdk_release_created: ${{ steps.release.outputs['plugins/plugin-sdk--release_created'] }}
+      connector_discord_release_created: ${{ steps.release.outputs['plugins/connector-discord--release_created'] }}
+      connector_feishu_release_created: ${{ steps.release.outputs['plugins/connector-feishu--release_created'] }}
+      provider_pi_release_created: ${{ steps.release.outputs['plugins/provider-pi--release_created'] }}
+      provider_codex_cli_release_created: ${{ steps.release.outputs['plugins/provider-codex-cli--release_created'] }}
+      provider_claude_cli_release_created: ${{ steps.release.outputs['plugins/provider-claude-cli--release_created'] }}
+      provider_claude_release_created: ${{ steps.release.outputs['plugins/provider-claude--release_created'] }}
+      sandbox_core_release_created: ${{ steps.release.outputs['plugins/sandbox-core--release_created'] }}
+    steps:
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (
+        needs.release-please.outputs.root_release_created == 'true' ||
+        needs.release-please.outputs.plugin_sdk_release_created == 'true' ||
+        needs.release-please.outputs.connector_discord_release_created == 'true' ||
+        needs.release-please.outputs.connector_feishu_release_created == 'true' ||
+        needs.release-please.outputs.provider_pi_release_created == 'true' ||
+        needs.release-please.outputs.provider_codex_cli_release_created == 'true' ||
+        needs.release-please.outputs.provider_claude_cli_release_created == 'true' ||
+        needs.release-please.outputs.provider_claude_release_created == 'true' ||
+        needs.release-please.outputs.sandbox_core_release_created == 'true'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            plugins/*/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install plugin dependencies
+        run: npm run plugins:install
+
+      - name: Build gateway
+        run: npm run build
+
+      - name: Build plugins
+        run: npm run plugins:build
+
+      - name: Publish plugin SDK
+        if: needs.release-please.outputs.plugin_sdk_release_created == 'true'
+        run: node scripts/publish-packages.mjs --allow-dirty --skip-existing --provenance --package plugins/plugin-sdk
+
+      - name: Publish Discord connector
+        if: needs.release-please.outputs.connector_discord_release_created == 'true'
+        run: node scripts/publish-packages.mjs --allow-dirty --skip-existing --provenance --package plugins/connector-discord
+
+      - name: Publish Feishu connector
+        if: needs.release-please.outputs.connector_feishu_release_created == 'true'
+        run: node scripts/publish-packages.mjs --allow-dirty --skip-existing --provenance --package plugins/connector-feishu
+
+      - name: Publish PI provider
+        if: needs.release-please.outputs.provider_pi_release_created == 'true'
+        run: node scripts/publish-packages.mjs --allow-dirty --skip-existing --provenance --package plugins/provider-pi
+
+      - name: Publish Codex CLI provider
+        if: needs.release-please.outputs.provider_codex_cli_release_created == 'true'
+        run: node scripts/publish-packages.mjs --allow-dirty --skip-existing --provenance --package plugins/provider-codex-cli
+
+      - name: Publish Claude CLI provider
+        if: needs.release-please.outputs.provider_claude_cli_release_created == 'true'
+        run: node scripts/publish-packages.mjs --allow-dirty --skip-existing --provenance --package plugins/provider-claude-cli
+
+      - name: Publish Claude provider
+        if: needs.release-please.outputs.provider_claude_release_created == 'true'
+        run: node scripts/publish-packages.mjs --allow-dirty --skip-existing --provenance --package plugins/provider-claude
+
+      - name: Publish sandbox core
+        if: needs.release-please.outputs.sandbox_core_release_created == 'true'
+        run: node scripts/publish-packages.mjs --allow-dirty --skip-existing --provenance --package plugins/sandbox-core
+
+      - name: Publish dobby CLI
+        if: needs.release-please.outputs.root_release_created == 'true'
+        run: node scripts/publish-packages.mjs --allow-dirty --skip-existing --provenance --package .

@@ -22,7 +22,9 @@ const publishTargets = [
 ];
 
 function printUsage() {
-  console.log("Usage: node scripts/publish-packages.mjs [--dry-run] [--tag <tag>] [--otp <code>] [--allow-dirty]");
+  console.log(
+    "Usage: node scripts/publish-packages.mjs [--dry-run] [--tag <tag>] [--otp <code>] [--allow-dirty] [--skip-existing] [--provenance] [--package <dir>]",
+  );
   console.log("");
   console.log("Publishes plugin-sdk, connector/provider packages, then the root @dobby.ai/dobby package.");
   console.log("");
@@ -31,6 +33,9 @@ function printUsage() {
   console.log("  --tag <tag>    Publish with a custom npm dist-tag");
   console.log("  --otp <code>   Forward an npm 2FA one-time password");
   console.log("  --allow-dirty  Skip the git working tree cleanliness check");
+  console.log("  --skip-existing  Skip packages whose version already exists on npm");
+  console.log("  --provenance    Publish with npm provenance metadata");
+  console.log("  --package <dir> Publish only the selected package directory (repeatable)");
 }
 
 async function run(command, args, cwd = projectRoot, capture = false) {
@@ -80,13 +85,30 @@ async function ensureCleanWorktree() {
   }
 }
 
+async function versionExists(meta) {
+  try {
+    const output = await run(
+      npmCommand,
+      ["view", `${meta.name}@${meta.version}`, "version", "--registry", "https://registry.npmjs.org"],
+      projectRoot,
+      true,
+    );
+    return output.trim() === meta.version;
+  } catch {
+    return false;
+  }
+}
+
 function parseArgs(argv) {
   const args = [...argv];
   const options = {
     dryRun: false,
     allowDirty: false,
+    skipExisting: false,
+    provenance: false,
     tag: undefined,
     otp: undefined,
+    packages: [],
   };
 
   while (args.length > 0) {
@@ -98,6 +120,20 @@ function parseArgs(argv) {
       case "--allow-dirty":
         options.allowDirty = true;
         break;
+      case "--skip-existing":
+        options.skipExisting = true;
+        break;
+      case "--provenance":
+        options.provenance = true;
+        break;
+      case "--package": {
+        const value = args.shift();
+        if (!value) {
+          throw new Error("--package requires a value");
+        }
+        options.packages.push(value);
+        break;
+      }
       case "--tag": {
         const value = args.shift();
         if (!value) {
@@ -127,18 +163,44 @@ function parseArgs(argv) {
   return options;
 }
 
+function resolveTargets(options) {
+  if (options.packages.length === 0) {
+    return publishTargets;
+  }
+
+  const requested = new Set(options.packages);
+  const selected = publishTargets.filter((target) => requested.has(target.dir));
+  const unknown = options.packages.filter((dir) => !selected.some((target) => target.dir === dir));
+
+  if (unknown.length > 0) {
+    throw new Error(`Unknown package dir(s): ${unknown.join(", ")}`);
+  }
+
+  return selected;
+}
+
 async function publishAll(options) {
   if (!options.allowDirty) {
     await ensureCleanWorktree();
   }
 
-  for (const target of publishTargets) {
+  for (const target of resolveTargets(options)) {
     const meta = await readPackageMeta(target.dir);
     const packageDir = resolve(projectRoot, target.dir);
+
+    if (options.skipExisting && (await versionExists(meta))) {
+      console.log(`\nSkipping ${meta.name}@${meta.version}; version already exists on npm.`);
+      continue;
+    }
+
     const publishArgs = ["publish"];
 
     if (options.dryRun) {
       publishArgs.push("--dry-run");
+    }
+    publishArgs.push("--access", "public");
+    if (options.provenance) {
+      publishArgs.push("--provenance");
     }
     if (options.tag) {
       publishArgs.push("--tag", options.tag);
