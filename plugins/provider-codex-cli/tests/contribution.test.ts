@@ -183,7 +183,7 @@ test("Codex CLI runtime maps command execution items to status and tool events",
 
   assert.deepEqual(events, [
     { type: "status", message: "Codex is thinking..." },
-    { type: "status", message: "Running command: pwd" },
+    { type: "command_start", command: "pwd" },
     { type: "tool_start", toolName: "pwd" },
     { type: "tool_end", toolName: "pwd", isError: false, output: "command: pwd\nstatus: completed\nexitCode: 0\n/tmp/project" },
     { type: "message_complete", text: "all set" },

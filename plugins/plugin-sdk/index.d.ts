@@ -5,6 +5,10 @@ export type Platform = string;
 export type ToolProfile = "full" | "readonly";
 export type MentionPolicy = "required" | "optional";
 export type BindingSourceType = "channel" | "chat";
+export type ProgressUpdateStrategy = "edit" | "create";
+export const OUTBOUND_MESSAGE_KIND_METADATA_KEY: "dobby_message_kind";
+export type OutboundMessageKind = "progress";
+export const OUTBOUND_MESSAGE_KIND_PROGRESS: OutboundMessageKind;
 
 export interface InboundAttachment {
   id: string;
@@ -84,6 +88,7 @@ export type ConnectorUpdateStrategy = "edit" | "final_only" | "append";
 
 export interface ConnectorCapabilities {
   updateStrategy: ConnectorUpdateStrategy;
+  progressUpdateStrategy?: ProgressUpdateStrategy;
   supportedSources: BindingSourceType[];
   supportsThread: boolean;
   supportsTyping: boolean;
@@ -119,6 +124,7 @@ export interface RouteResolution {
 export type GatewayAgentEvent =
   | { type: "message_delta"; delta: string }
   | { type: "message_complete"; text: string }
+  | { type: "command_start"; command: string }
   | { type: "tool_start"; toolName: string }
   | { type: "tool_end"; toolName: string; isError: boolean; output: string }
   | { type: "status"; message: string };

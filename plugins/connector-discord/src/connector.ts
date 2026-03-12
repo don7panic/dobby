@@ -53,6 +53,7 @@ export class DiscordConnector implements ConnectorPlugin {
   readonly name = "discord";
   readonly capabilities: ConnectorCapabilities = {
     updateStrategy: "edit",
+    progressUpdateStrategy: "edit",
     supportedSources: ["channel"],
     supportsThread: true,
     supportsTyping: true,

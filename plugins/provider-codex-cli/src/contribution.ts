@@ -533,7 +533,7 @@ export class CodexCliGatewayRuntime implements GatewayAgentRuntime {
       ? item.command
       : "(unknown command)";
     state.activeCommands.set(itemId, command);
-    this.emit({ type: "status", message: `Running command: ${command}` });
+    this.emit({ type: "command_start", command });
     this.emit({ type: "tool_start", toolName: command });
   }
 

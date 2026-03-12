@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import * as Lark from "@larksuiteoapi/node-sdk";
+import {
+  OUTBOUND_MESSAGE_KIND_METADATA_KEY,
+  OUTBOUND_MESSAGE_KIND_PROGRESS,
+} from "@dobby.ai/plugin-sdk";
 import type {
   ConnectorCapabilities,
   ConnectorContext,
@@ -21,6 +25,8 @@ export interface FeishuConnectorConfig {
   cardTitle?: string;
   downloadAttachments?: boolean;
 }
+
+export type FeishuMessageFormat = "text" | "card_markdown";
 
 const FEISHU_CARD_MAX_TEXT_LENGTH = 8_000;
 const FEISHU_TEXT_MAX_TEXT_LENGTH = 12_000;
@@ -83,6 +89,7 @@ export class FeishuConnector implements ConnectorPlugin {
     this.id = id;
     this.capabilities = {
       updateStrategy: this.messageFormat === "card_markdown" ? "final_only" : "edit",
+      progressUpdateStrategy: "edit",
       supportedSources: ["chat"],
       supportsThread: this.replyMode === "reply",
       supportsTyping: false,
@@ -177,6 +184,8 @@ export class FeishuConnector implements ConnectorPlugin {
       throw new Error("Feishu connector is not started");
     }
 
+    const rendered = this.resolveRenderedMessage(message);
+
     if (message.attachments && message.attachments.length > 0) {
       this.logger.warn(
         {
@@ -193,13 +202,13 @@ export class FeishuConnector implements ConnectorPlugin {
         throw new Error("targetMessageId is required for update mode");
       }
 
-      if (this.messageFormat === "card_markdown") {
+      if (rendered.format === "card_markdown") {
         await this.client.im.v1.message.patch({
           path: {
             message_id: message.targetMessageId,
           },
           data: {
-            content: this.renderContent(message.text),
+            content: rendered.content,
           },
         });
         return { messageId: message.targetMessageId };
@@ -210,8 +219,8 @@ export class FeishuConnector implements ConnectorPlugin {
           message_id: message.targetMessageId,
         },
         data: {
-          msg_type: "text",
-          content: this.renderContent(message.text),
+          msg_type: rendered.msgType,
+          content: rendered.content,
         },
       });
       return { messageId: response.data?.message_id ?? message.targetMessageId };
@@ -223,8 +232,8 @@ export class FeishuConnector implements ConnectorPlugin {
           message_id: message.replyToMessageId,
         },
         data: {
-          msg_type: this.renderMessageType(),
-          content: this.renderContent(message.text),
+          msg_type: rendered.msgType,
+          content: rendered.content,
           reply_in_thread: Boolean(message.threadId),
           uuid: randomUUID(),
         },
@@ -238,8 +247,8 @@ export class FeishuConnector implements ConnectorPlugin {
           message_id: message.threadId,
         },
         data: {
-          msg_type: this.renderMessageType(),
-          content: this.renderContent(message.text),
+          msg_type: rendered.msgType,
+          content: rendered.content,
           reply_in_thread: true,
           uuid: randomUUID(),
         },
@@ -253,8 +262,8 @@ export class FeishuConnector implements ConnectorPlugin {
       },
       data: {
         receive_id: message.chatId,
-        msg_type: this.renderMessageType(),
-        content: this.renderContent(message.text),
+        msg_type: rendered.msgType,
+        content: rendered.content,
         uuid: randomUUID(),
       },
     });
@@ -322,7 +331,7 @@ export class FeishuConnector implements ConnectorPlugin {
     }
   }
 
-  private get messageFormat(): "text" | "card_markdown" {
+  private get messageFormat(): FeishuMessageFormat {
     return this.config.messageFormat ?? "card_markdown";
   }
 
@@ -330,14 +339,35 @@ export class FeishuConnector implements ConnectorPlugin {
     return this.config.replyMode ?? "direct";
   }
 
-  private renderMessageType(): "text" | "interactive" {
-    return this.messageFormat === "card_markdown" ? "interactive" : "text";
+  private resolveMessageFormat(message: OutboundEnvelope): FeishuMessageFormat {
+    const messageKind = message.metadata?.[OUTBOUND_MESSAGE_KIND_METADATA_KEY];
+    if (messageKind === OUTBOUND_MESSAGE_KIND_PROGRESS && this.messageFormat === "card_markdown") {
+      return "text";
+    }
+    return this.messageFormat;
   }
 
-  private renderContent(text: string): string {
-    if (this.messageFormat === "card_markdown") {
+  private renderMessageType(format: FeishuMessageFormat): "text" | "interactive" {
+    return format === "card_markdown" ? "interactive" : "text";
+  }
+
+  private renderContent(text: string, format: FeishuMessageFormat): string {
+    if (format === "card_markdown") {
       return cardContent(text, this.config.cardTitle ?? this.config.botName ?? "dobby");
     }
     return textContent(text);
+  }
+
+  private resolveRenderedMessage(message: OutboundEnvelope): {
+    format: FeishuMessageFormat;
+    msgType: "text" | "interactive";
+    content: string;
+  } {
+    const format = this.resolveMessageFormat(message);
+    return {
+      format,
+      msgType: this.renderMessageType(format),
+      content: this.renderContent(message.text, format),
+    };
   }
 }

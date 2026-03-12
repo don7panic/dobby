@@ -1,5 +1,10 @@
+import {
+  OUTBOUND_MESSAGE_KIND_METADATA_KEY,
+  OUTBOUND_MESSAGE_KIND_PROGRESS,
+} from "../core/types.js";
 import type {
   ConnectorPlugin,
+  ProgressUpdateStrategy,
   ConnectorUpdateStrategy,
   GatewayAgentEvent,
   GatewayLogger,
@@ -9,9 +14,19 @@ import type {
 
 interface ForwarderOptions {
   updateIntervalMs?: number;
+  progressDebounceMs?: number;
+  longProgressMs?: number;
   toolMessageMode?: "none" | "errors" | "all";
   onOutboundActivity?: () => void;
 }
+
+const DEFAULT_PROGRESS_DEBOUNCE_MS = 150;
+const DEFAULT_LONG_PROGRESS_MS = 10_000;
+const WORKING_LOCALLY_TEXT = "Working locally...";
+const STILL_WORKING_LOCALLY_TEXT = "Still working locally...";
+const WORKING_WITH_TOOLS_TEXT = "Working with tools...";
+const STILL_WORKING_WITH_TOOLS_TEXT = "Still working with tools...";
+const RECOVERING_FROM_TOOL_ISSUE_TEXT = "Recovering from a tool issue...";
 
 function truncate(text: string, max?: number): string {
   if (max === undefined) return text;
@@ -72,13 +87,24 @@ export class EventForwarder {
   private appendEmittedText = "";
   private pendingFlush: NodeJS.Timeout | null = null;
   private flushSerial: Promise<void> = Promise.resolve();
+  private progressSerial: Promise<void> = Promise.resolve();
   private readonly pendingOps: Array<Promise<unknown>> = [];
   private readonly updateIntervalMs: number;
+  private readonly progressDebounceMs: number;
+  private readonly longProgressMs: number;
   private readonly toolMessageMode: "none" | "errors" | "all";
   private readonly maxTextLength: number | undefined;
   private readonly onOutboundActivity: (() => void) | undefined;
   private readonly updateStrategy: ConnectorUpdateStrategy;
+  private readonly progressUpdateStrategy: ProgressUpdateStrategy;
   private lastEditPrimaryText: string | null = null;
+  private progressMessageId: string | null = null;
+  private lastProgressMessageText: string | null = null;
+  private pendingProgressText: string | null = null;
+  private pendingProgressFlush: NodeJS.Timeout | null = null;
+  private hasQueuedProgressMessage = false;
+  private longProgressTimer: NodeJS.Timeout | null = null;
+  private activeWorkPhase: "local" | "tool" | null = null;
 
   constructor(
     private readonly connector: ConnectorPlugin,
@@ -89,9 +115,13 @@ export class EventForwarder {
   ) {
     this.rootMessageId = rootMessageId;
     this.updateIntervalMs = options.updateIntervalMs ?? 400;
+    this.progressDebounceMs = options.progressDebounceMs ?? DEFAULT_PROGRESS_DEBOUNCE_MS;
+    this.longProgressMs = options.longProgressMs ?? DEFAULT_LONG_PROGRESS_MS;
     this.toolMessageMode = options.toolMessageMode ?? "none";
     this.onOutboundActivity = options.onOutboundActivity;
     this.updateStrategy = this.connector.capabilities.updateStrategy;
+    this.progressUpdateStrategy = this.connector.capabilities.progressUpdateStrategy
+      ?? (this.updateStrategy === "edit" ? "edit" : "create");
     const capabilityMaxTextLength = this.connector.capabilities.maxTextLength;
     this.maxTextLength = typeof capabilityMaxTextLength === "number" && capabilityMaxTextLength > 0
       ? capabilityMaxTextLength
@@ -121,6 +151,11 @@ export class EventForwarder {
       return;
     }
 
+    if (event.type === "command_start") {
+      this.enterWorkPhase("local");
+      return;
+    }
+
     if (event.type === "tool_start") {
       this.logger.info(
         {
@@ -129,8 +164,10 @@ export class EventForwarder {
         },
         "Tool execution started",
       );
-      if (this.updateStrategy !== "final_only" && this.toolMessageMode === "all") {
-        this.enqueueSend(`_-> Running tool: ${event.toolName}_`);
+      if (this.toolMessageMode === "all") {
+        this.enqueueSideMessage(this.renderToolStartMessage(event.toolName));
+      } else {
+        this.enterWorkPhase("tool");
       }
       return;
     }
@@ -146,29 +183,24 @@ export class EventForwarder {
         event.isError ? "Tool execution finished with error" : "Tool execution finished",
       );
       if (
-        this.updateStrategy !== "final_only" &&
         (this.toolMessageMode === "all" || (this.toolMessageMode === "errors" && event.isError))
       ) {
-        const prefix = event.isError ? "ERR" : "OK";
-        const header = `*${prefix} ${event.toolName}*\n\`\`\`\n`;
-        const footer = "\n```";
-        const availableSummaryLength = this.maxTextLength === undefined
-          ? undefined
-          : Math.max(0, this.maxTextLength - header.length - footer.length);
-        this.enqueueSend(`${header}${truncate(summary, availableSummaryLength)}${footer}`);
+        this.enqueueSideMessage(this.renderToolEndMessage(event.toolName, event.isError, summary));
+      } else if (event.isError) {
+        this.setProgressMessage(RECOVERING_FROM_TOOL_ISSUE_TEXT);
       }
       return;
     }
 
     if (event.type === "status") {
-      if (this.updateStrategy === "final_only") {
-        return;
-      }
-      this.enqueueSend(`_${event.message}_`);
+      this.setProgressMessage(event.message);
     }
   };
 
   async finalize(): Promise<void> {
+    this.clearLongProgressTimer();
+    await this.flushProgressUpdates();
+
     if (this.updateStrategy === "final_only") {
       await this.finalizeFinalOnly();
       await Promise.allSettled(this.pendingOps);
@@ -213,6 +245,8 @@ export class EventForwarder {
       }
 
       try {
+        await this.flushProgressUpdates();
+
         if (this.updateStrategy === "append") {
           await this.flushAppendProgress();
           return;
@@ -244,13 +278,130 @@ export class EventForwarder {
     await run;
   }
 
-  private enqueueSend(text: string): void {
+  private enqueueSideMessage(text: string): void {
+    this.enqueueSendWithMetadata(text, this.progressMessageMetadata());
+  }
+
+  private setProgressMessage(message: string): void {
+    this.activeWorkPhase = null;
+    this.clearLongProgressTimer();
+    this.scheduleProgressUpdate(this.renderStatusMessage(message));
+  }
+
+  private enterWorkPhase(phase: "local" | "tool"): void {
+    if (this.activeWorkPhase === "local" && phase === "tool") {
+      return;
+    }
+    if (this.activeWorkPhase === phase) {
+      return;
+    }
+
+    this.activeWorkPhase = phase;
+    this.scheduleProgressUpdate(this.renderWorkPhaseMessage(phase, false));
+    this.scheduleLongProgressUpdate(phase);
+  }
+
+  private scheduleProgressUpdate(text: string): void {
+    const shouldCreateImmediately = !this.hasQueuedProgressMessage;
+    this.hasQueuedProgressMessage = true;
+    this.pendingProgressText = text;
+    if (shouldCreateImmediately) {
+      void this.flushProgressNow();
+      return;
+    }
+
+    if (this.pendingProgressFlush) {
+      clearTimeout(this.pendingProgressFlush);
+    }
+    this.pendingProgressFlush = setTimeout(() => {
+      void this.flushProgressNow();
+    }, this.progressDebounceMs);
+  }
+
+  private async flushProgressNow(): Promise<void> {
+    if (this.pendingProgressFlush) {
+      clearTimeout(this.pendingProgressFlush);
+      this.pendingProgressFlush = null;
+    }
+
+    const text = this.pendingProgressText;
+    if (text === null) {
+      return;
+    }
+    this.pendingProgressText = null;
+
+    const metadata = this.progressMessageMetadata();
+    const run = this.progressSerial.then(async () => {
+      if (this.lastProgressMessageText === text) {
+        return;
+      }
+
+      try {
+        if (this.canEditProgressMessage() && this.progressMessageId) {
+          await this.connector.send({
+            ...this.baseEnvelope(),
+            mode: "update",
+            targetMessageId: this.progressMessageId,
+            text,
+            metadata,
+          });
+          this.lastProgressMessageText = text;
+          this.noteOutboundActivity();
+          return;
+        }
+
+        const created = await this.connector.send({
+          ...this.baseEnvelope(),
+          mode: "create",
+          text,
+          metadata,
+        });
+        this.progressMessageId = this.canEditProgressMessage() ? (created.messageId ?? this.progressMessageId) : null;
+        this.lastProgressMessageText = text;
+        this.noteOutboundActivity();
+      } catch (error) {
+        this.logger.warn(
+          {
+            err: error,
+            connectorId: this.inbound.connectorId,
+            chatId: this.inbound.chatId,
+            progressMessageId: this.progressMessageId,
+          },
+          "Failed to send or update progress message",
+        );
+      }
+    });
+
+    this.progressSerial = run.catch(() => {
+      // keep chain alive for future progress updates
+    });
+    this.pendingOps.push(run);
+
+    await run;
+  }
+
+  private scheduleLongProgressUpdate(phase: "local" | "tool"): void {
+    this.clearLongProgressTimer();
+    if (this.longProgressMs <= 0) {
+      return;
+    }
+
+    this.longProgressTimer = setTimeout(() => {
+      if (this.activeWorkPhase !== phase) {
+        return;
+      }
+      this.scheduleProgressUpdate(this.renderWorkPhaseMessage(phase, true));
+    }, this.longProgressMs);
+  }
+
+  private enqueueSendWithMetadata(text: string, metadata?: Record<string, string>): void {
     const promise = this.connector
       .send({
         ...this.baseEnvelope(),
         mode: "create",
         ...(this.rootMessageId ? { replyToMessageId: this.rootMessageId } : {}),
         text,
+        ...(metadata ? { metadata } : {}),
       })
       .then(() => {
         this.noteOutboundActivity();
@@ -268,6 +419,57 @@ export class EventForwarder {
       });
 
     this.pendingOps.push(promise);
+  }
+
+  private canEditProgressMessage(): boolean {
+    return this.progressUpdateStrategy === "edit";
+  }
+
+  private progressMessageMetadata(): Record<string, string> {
+    return {
+      [OUTBOUND_MESSAGE_KIND_METADATA_KEY]: OUTBOUND_MESSAGE_KIND_PROGRESS,
+    };
+  }
+
+  private renderStatusMessage(message: string): string {
+    return truncate(message, this.maxTextLength);
+  }
+
+  private renderWorkPhaseMessage(phase: "local" | "tool", isLongRunning: boolean): string {
+    if (phase === "local") {
+      return truncate(isLongRunning ? STILL_WORKING_LOCALLY_TEXT : WORKING_LOCALLY_TEXT, this.maxTextLength);
+    }
+    return truncate(isLongRunning ? STILL_WORKING_WITH_TOOLS_TEXT : WORKING_WITH_TOOLS_TEXT, this.maxTextLength);
+  }
+
+  private renderToolStartMessage(toolName: string): string {
+    return truncate(`Running tool: ${toolName}`, this.maxTextLength);
+  }
+
+  private renderToolEndMessage(toolName: string, isError: boolean, summary: string): string {
+    const prefix = isError ? "ERR" : "OK";
+    const body = summary.trim().length > 0 ? `${prefix} ${toolName}\n${summary}` : `${prefix} ${toolName}`;
+    return truncate(body, this.maxTextLength);
+  }
+
+  private async flushProgressUpdates(): Promise<void> {
+    if (this.pendingProgressText !== null) {
+      await this.flushProgressNow();
+      return;
+    }
+
+    try {
+      await this.progressSerial;
+    } catch {
+      // progress message failures are already logged when they happen
+    }
+  }
+
+  private clearLongProgressTimer(): void {
+    if (this.longProgressTimer) {
+      clearTimeout(this.longProgressTimer);
+      this.longProgressTimer = null;
+    }
   }
 
   private async sendEditPrimary(text: string): Promise<void> {
