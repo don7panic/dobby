@@ -5,7 +5,7 @@ import { createInitSelectionConfig } from "../shared/init-catalog.js";
 test("createInitSelectionConfig writes Discord starter template for provider.pi", () => {
   const selected = createInitSelectionConfig(["provider.pi"], ["connector.discord"], {
     routeProviderChoiceId: "provider.pi",
-    defaultProjectRoot: "/Users/oolong/workspace/dobby",
+    defaultProjectRoot: "./my-project",
   });
 
   assert.deepEqual(selected.providerChoiceIds, ["provider.pi"]);
@@ -34,7 +34,7 @@ test("createInitSelectionConfig writes Discord starter template for provider.pi"
     },
   }]);
   assert.deepEqual(selected.routeDefaults, {
-    projectRoot: "/Users/oolong/workspace/dobby",
+    projectRoot: "./my-project",
     tools: "full",
     mentions: "required",
     provider: "pi.main",
@@ -60,7 +60,7 @@ test("createInitSelectionConfig writes Discord starter template for provider.pi"
 test("createInitSelectionConfig writes Feishu starter template for provider.claude-cli", () => {
   const selected = createInitSelectionConfig(["provider.claude-cli"], ["connector.feishu"], {
     routeProviderChoiceId: "provider.claude-cli",
-    defaultProjectRoot: "/Users/oolong/workspace/dobby",
+    defaultProjectRoot: "./my-project",
   });
 
   assert.deepEqual(selected.providerChoiceIds, ["provider.claude-cli"]);
@@ -99,7 +99,7 @@ test("createInitSelectionConfig supports multiple providers and connectors with 
     ["connector.discord", "connector.feishu"],
     {
       routeProviderChoiceId: "provider.claude-cli",
-      defaultProjectRoot: "/Users/oolong/workspace/dobby",
+      defaultProjectRoot: "./my-project",
     },
   );
 
