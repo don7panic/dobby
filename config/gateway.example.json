@@ -112,6 +112,8 @@
           "command": "codex",
           "commandArgs": [],
           "model": "gpt-5-codex",
+          "approvalPolicy": "never",
+          "sandboxMode": "workspace-write",
           "skipGitRepoCheck": false
         }
       }

@@ -8,7 +8,16 @@
       "component": "dobby",
       "package-name": "@dobby.ai/dobby",
       "exclude-paths": [
-        "plugins"
+        ".github",
+        ".release-please-manifest.json",
+        "AGENTS.md",
+        "README.md",
+        "ROADMAP.md",
+        "config",
+        "docs",
+        "plugins",
+        "release-please-config.json",
+        "scripts"
       ]
     },
     "plugins/plugin-sdk": {

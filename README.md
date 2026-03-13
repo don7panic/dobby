@@ -336,8 +336,29 @@ codex login status
 
 - `command`（默认 `codex`）
 - `commandArgs`（默认 `[]`）
-- `model`（可选；未设置时使用 Codex CLI / 本地配置默认模型）
+- `model`（可选；未设置时沿用 Codex CLI 当前 profile / `~/.codex/config.toml` 的默认模型）
+- `profile`（可选；等价于 `codex -p <profile>`）
+- `approvalPolicy`（可选；默认 `never`）
+- `sandboxMode`（可选；不填时按 route 的 `tools` 推导：`readonly -> read-only`，`full -> workspace-write`）
+- `configOverrides`（可选；字符串数组，按原样转成重复的 `codex -c key=value`）
 - `skipGitRepoCheck`（默认 `false`）
+
+例如希望网关里的 Codex 会话复用本机 profile，并显式打开无人值守执行：
+
+```json
+{
+  "type": "provider.codex-cli",
+  "command": "codex",
+  "profile": "background",
+  "approvalPolicy": "never",
+  "sandboxMode": "danger-full-access",
+  "configOverrides": [
+    "model_reasoning_effort = \"xhigh\""
+  ]
+}
+```
+
+注意：`provider.codex-cli` 当前是 host-only，`danger-full-access` 会直接作用在宿主机上。
 
 `--enable` 的行为：
 

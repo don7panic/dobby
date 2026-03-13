@@ -156,6 +156,25 @@ codex login status
 说明：
 1. `provider.codex-cli` 认证由外部 `codex` CLI 自己管理，可用 ChatGPT 登录态或 API key。
 2. `provider.codex-cli` 当前只处理文本 / 附件路径，不转发图片输入。
+3. `provider.codex-cli.model` 不填时，会继承 `~/.codex/config.toml` 或所选 `profile` 里的默认模型。
+4. 可选配置 `profile` / `approvalPolicy` / `sandboxMode` / `configOverrides` 会分别透传到 `codex -p`、`-a`、`-s`、`-c key=value`。
+
+若希望它在你离开时也能继续跑，可显式配置成无人审批并按需放宽沙箱，例如：
+
+```json
+{
+  "type": "provider.codex-cli",
+  "command": "codex",
+  "profile": "background",
+  "approvalPolicy": "never",
+  "sandboxMode": "danger-full-access",
+  "configOverrides": [
+    "model_reasoning_effort = \"xhigh\""
+  ]
+}
+```
+
+注意：`provider.codex-cli` 当前仍是 host-only；`danger-full-access` 会直接放开宿主机执行权限。
 
 若使用 `provider.claude-cli`，启动前建议检查：
 
