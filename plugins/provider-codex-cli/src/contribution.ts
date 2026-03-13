@@ -14,12 +14,17 @@ import type {
   ProviderSessionArchiveOptions,
 } from "@dobby.ai/plugin-sdk";
 
-type CodexSandboxMode = "read-only" | "workspace-write";
+type CodexApprovalPolicy = "untrusted" | "on-failure" | "on-request" | "never";
+type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 interface CodexCliProviderConfig {
   command: string;
   commandArgs: string[];
   model?: string;
+  profile?: string;
+  approvalPolicy: CodexApprovalPolicy;
+  sandboxMode?: CodexSandboxMode;
+  configOverrides: string[];
   skipGitRepoCheck: boolean;
 }
 
@@ -57,6 +62,15 @@ const codexCliProviderConfigSchema = z.object({
   command: z.string().min(1).default("codex"),
   commandArgs: z.array(z.string()).default([]),
   model: z.string().min(1).optional(),
+  profile: z.string().trim().min(1).optional(),
+  approvalPolicy: z.enum(["untrusted", "on-failure", "on-request", "never"]).default("never"),
+  sandboxMode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
+  configOverrides: z.array(
+    z.string().trim().min(1).refine(
+      (value) => value.includes("="),
+      "Codex config overrides must be provided as 'key=value' entries.",
+    ),
+  ).default([]),
   skipGitRepoCheck: z.boolean().default(false),
 });
 
@@ -574,15 +588,27 @@ export class CodexCliGatewayRuntime implements GatewayAgentRuntime {
   }
 
   private buildCodexArgs(resumeThreadId: string | undefined): string[] {
+    const sandboxMode = this.providerConfig.sandboxMode ?? mapToolProfileToSandbox(this.route.profile.tools);
     const args: string[] = [
       ...this.providerConfig.commandArgs,
+    ];
+
+    if (this.providerConfig.profile) {
+      args.push("-p", this.providerConfig.profile);
+    }
+
+    for (const override of this.providerConfig.configOverrides) {
+      args.push("-c", override);
+    }
+
+    args.push(
       "-a",
-      "never",
+      this.providerConfig.approvalPolicy,
       "-C",
       this.route.profile.projectRoot,
       "-s",
-      mapToolProfileToSandbox(this.route.profile.tools),
-    ];
+      sandboxMode,
+    );
 
     if (this.providerConfig.model) {
       args.push("-m", this.providerConfig.model);
@@ -773,6 +799,10 @@ export const providerCodexCliContribution: ProviderContributionModule = {
     const config: CodexCliProviderConfig = {
       command: normalizeCommand(options.host.configBaseDir, parsed.command),
       commandArgs: parsed.commandArgs,
+      approvalPolicy: parsed.approvalPolicy,
+      configOverrides: parsed.configOverrides,
+      ...(parsed.profile ? { profile: parsed.profile } : {}),
+      ...(parsed.sandboxMode ? { sandboxMode: parsed.sandboxMode } : {}),
       skipGitRepoCheck: parsed.skipGitRepoCheck,
       ...(parsed.model ? { model: parsed.model } : {}),
     };

@@ -81,6 +81,8 @@ test("Codex CLI runtime persists thread id and emits final assistant message", a
       command: "codex",
       commandArgs: [],
       model: "gpt-5-codex",
+      approvalPolicy: "never",
+      configOverrides: [],
       skipGitRepoCheck: true,
     },
     sessionMetaPath,
@@ -142,6 +144,8 @@ test("Codex CLI runtime maps command execution items to status and tool events",
     {
       command: "codex",
       commandArgs: [],
+      approvalPolicy: "never",
+      configOverrides: [],
       skipGitRepoCheck: false,
     },
     sessionMetaPath,
@@ -190,6 +194,63 @@ test("Codex CLI runtime maps command execution items to status and tool events",
   ]);
 });
 
+test("Codex CLI runtime supports explicit profile, approval policy, sandbox mode, and config overrides", async () => {
+  const sessionMetaPath = await createSessionMetaPath();
+  const runtime = new CodexCliGatewayRuntime(
+    "codex-cli.main",
+    "conversation:profiled",
+    createRoute(),
+    createLogger() as never,
+    {
+      command: "codex",
+      commandArgs: ["--search"],
+      profile: "background",
+      approvalPolicy: "never",
+      sandboxMode: "danger-full-access",
+      configOverrides: [
+        "model_provider = \"crs\"",
+        "model_reasoning_effort = \"xhigh\"",
+      ],
+      skipGitRepoCheck: false,
+    },
+    sessionMetaPath,
+    undefined,
+    false,
+    (_command, args) => {
+      assert.deepEqual(args, [
+        "--search",
+        "-p",
+        "background",
+        "-c",
+        "model_provider = \"crs\"",
+        "-c",
+        "model_reasoning_effort = \"xhigh\"",
+        "-a",
+        "never",
+        "-C",
+        "/tmp/project",
+        "-s",
+        "danger-full-access",
+        "exec",
+        "--json",
+        "-",
+      ]);
+
+      const child = new FakeChildProcess();
+      setImmediate(() => {
+        child.stdout.write(`${JSON.stringify({ type: "thread.started", thread_id: "thread-danger" })}\n`);
+        child.stdout.write(`${JSON.stringify({ type: "item.completed", item: { id: "msg_1", type: "agent_message", text: "done with overrides" } })}\n`);
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  );
+
+  await runtime.prompt("Work in the background");
+});
+
 test("Codex CLI runtime retries without resume when previous thread cannot be resumed", async () => {
   const sessionMetaPath = await createSessionMetaPath();
   await writeFile(sessionMetaPath, JSON.stringify({ threadId: "stale-thread", updatedAtMs: Date.now() }), "utf-8");
@@ -203,6 +264,8 @@ test("Codex CLI runtime retries without resume when previous thread cannot be re
     {
       command: "codex",
       commandArgs: [],
+      approvalPolicy: "never",
+      configOverrides: [],
       skipGitRepoCheck: false,
     },
     sessionMetaPath,
@@ -281,6 +344,8 @@ test("Codex CLI runtime surfaces missing binary errors", async () => {
     {
       command: "codex",
       commandArgs: [],
+      approvalPolicy: "never",
+      configOverrides: [],
       skipGitRepoCheck: false,
     },
     sessionMetaPath,
