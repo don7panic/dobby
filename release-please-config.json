@@ -6,7 +6,10 @@
     ".": {
       "release-type": "node",
       "component": "dobby",
-      "package-name": "@dobby.ai/dobby"
+      "package-name": "@dobby.ai/dobby",
+      "exclude-paths": [
+        "plugins"
+      ]
     },
     "plugins/plugin-sdk": {
       "release-type": "node",
