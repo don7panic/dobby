@@ -58,6 +58,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     steps:
       - name: Check out repository
@@ -72,8 +74,6 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             plugins/*/package-lock.json
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Install root dependencies
         run: npm ci
@@ -86,6 +86,9 @@ jobs:
 
       - name: Build plugins
         run: npm run plugins:build
+
+      - name: Verify npm authentication
+        run: npm whoami --registry https://registry.npmjs.org
 
       - name: Publish plugin SDK
         if: needs.release-please.outputs.plugin_sdk_release_created == 'true'
