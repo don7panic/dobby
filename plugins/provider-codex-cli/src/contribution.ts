@@ -51,6 +51,7 @@ interface SpawnedCodexChild {
 }
 
 interface SpawnChildOptions {
+  cwd?: string;
   env?: NodeJS.ProcessEnv;
   detached?: boolean;
   stdio: ["pipe", "pipe", "pipe"];
@@ -353,6 +354,7 @@ export class CodexCliGatewayRuntime implements GatewayAgentRuntime {
     let child: SpawnedCodexChild;
     try {
       child = this.spawnChild(this.providerConfig.command, args, {
+        cwd: this.route.profile.projectRoot,
         env: process.env,
         stdio: ["pipe", "pipe", "pipe"],
         detached: process.platform !== "win32",

@@ -71,7 +71,7 @@ test("loadStoredThreadId tolerates corrupt thread metadata", async () => {
 
 test("Codex CLI runtime persists thread id and emits final assistant message", async () => {
   const sessionMetaPath = await createSessionMetaPath();
-  const spawnCalls: Array<{ command: string; args: string[] }> = [];
+  const spawnCalls: Array<{ command: string; args: string[]; cwd?: string }> = [];
   const runtime = new CodexCliGatewayRuntime(
     "codex-cli.main",
     "conversation:1",
@@ -88,8 +88,8 @@ test("Codex CLI runtime persists thread id and emits final assistant message", a
     sessionMetaPath,
     undefined,
     false,
-    (command, args) => {
-      spawnCalls.push({ command, args });
+    (command, args, options) => {
+      spawnCalls.push({ command, args, cwd: options.cwd });
       const child = new FakeChildProcess();
       setImmediate(() => {
         child.stdout.write(`${JSON.stringify({ type: "thread.started", thread_id: "thread-123" })}\n`);
@@ -129,6 +129,7 @@ test("Codex CLI runtime persists thread id and emits final assistant message", a
     "--skip-git-repo-check",
     "-",
   ]);
+  assert.equal(spawnCalls[0]?.cwd, "/tmp/project");
 
   const persisted = JSON.parse(await readFile(sessionMetaPath, "utf-8")) as { threadId: string };
   assert.equal(persisted.threadId, "thread-123");
