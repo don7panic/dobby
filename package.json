@@ -4,6 +4,14 @@
   "private": false,
   "type": "module",
   "description": "Discord-first local agent gateway built on pi packages",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/don7panic/dobby"
+  },
+  "homepage": "https://github.com/don7panic/dobby#readme",
+  "bugs": {
+    "url": "https://github.com/don7panic/dobby/issues"
+  },
   "bin": {
     "dobby": "dist/src/main.js"
   },

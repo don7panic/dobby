@@ -4,6 +4,15 @@
   "private": false,
   "type": "module",
   "description": "Codex CLI provider extension package",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/don7panic/dobby",
+    "directory": "plugins/provider-codex-cli"
+  },
+  "homepage": "https://github.com/don7panic/dobby#readme",
+  "bugs": {
+    "url": "https://github.com/don7panic/dobby/issues"
+  },
   "main": "./index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",

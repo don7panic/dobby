@@ -4,6 +4,15 @@
   "private": false,
   "type": "module",
   "description": "Public plugin contracts for dobby extensions",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/don7panic/dobby",
+    "directory": "plugins/plugin-sdk"
+  },
+  "homepage": "https://github.com/don7panic/dobby#readme",
+  "bugs": {
+    "url": "https://github.com/don7panic/dobby/issues"
+  },
   "main": "./index.js",
   "types": "./index.d.ts",
   "exports": {
