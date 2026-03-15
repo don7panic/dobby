@@ -10,6 +10,8 @@ import {
 import type {
   ConnectorCapabilities,
   ConnectorContext,
+  ConnectorHealth,
+  ConnectorHealthStatus,
   ConnectorPlugin,
   ConnectorSendResult,
   ConnectorTypingEnvelope,
@@ -47,6 +49,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
 }
 
+function createHealth(status: ConnectorHealthStatus, detail?: string): ConnectorHealth {
+  const now = Date.now();
+  return {
+    status,
+    statusSinceMs: now,
+    updatedAtMs: now,
+    ...(detail ? { detail } : {}),
+  };
+}
+
 export class DiscordConnector implements ConnectorPlugin {
   readonly id: string;
   readonly platform = "discord" as const;
@@ -69,6 +81,8 @@ export class DiscordConnector implements ConnectorPlugin {
   private reconnectInFlight = false;
   private lastHealthyAtMs = 0;
   private stopped = false;
+  private health = createHealth("stopped");
+  private lastReadyAtMs: number | undefined;
 
   constructor(
     id: string,
@@ -94,6 +108,7 @@ export class DiscordConnector implements ConnectorPlugin {
     this.botToken = token;
     this.stopped = false;
     this.lastHealthyAtMs = Date.now();
+    this.updateHealth("starting", "Logging into Discord gateway");
 
     this.client = this.createClient();
     this.bindClientEventHandlers(this.client);
@@ -159,10 +174,47 @@ export class DiscordConnector implements ConnectorPlugin {
     await channel.sendTyping();
   }
 
+  getHealth(): ConnectorHealth {
+    if (this.stopped) {
+      return this.health;
+    }
+
+    const client = this.client;
+    if (!client) {
+      this.updateHealth("stopped", "Discord connector is not started");
+      return this.health;
+    }
+
+    if (client.isReady()) {
+      this.lastHealthyAtMs = Date.now();
+      this.updateHealth("ready", "Discord gateway connected");
+      return this.health;
+    }
+
+    if (this.reconnectInFlight) {
+      this.updateHealth("reconnecting", "Discord reconnect is in flight");
+      return this.health;
+    }
+
+    const staleMs = Date.now() - this.lastHealthyAtMs;
+    const thresholdMs = this.config.reconnectStaleMs ?? DEFAULT_RECONNECT_STALE_MS;
+    if (staleMs >= thresholdMs) {
+      this.updateHealth("degraded", `Discord gateway has been not-ready for ${staleMs}ms`);
+      return this.health;
+    }
+
+    if (this.health.status === "ready") {
+      this.updateHealth("degraded", "Discord gateway is not ready");
+    }
+
+    return this.health;
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     this.stopReconnectWatchdog();
     this.reconnectInFlight = false;
+    this.updateHealth("stopped", "Discord connector stopped");
     if (!this.client) return;
 
     const client = this.client;
@@ -192,6 +244,7 @@ export class DiscordConnector implements ConnectorPlugin {
       if (client !== this.client || !client.user) return;
       this.botUserId = client.user.id;
       this.lastHealthyAtMs = Date.now();
+      this.updateHealth("ready", "Discord gateway connected");
       this.logger.info(
         {
           userId: this.botUserId,
@@ -204,6 +257,7 @@ export class DiscordConnector implements ConnectorPlugin {
 
     client.on("shardDisconnect", (event, shardId) => {
       if (client !== this.client) return;
+      this.updateHealth("reconnecting", `Discord shard ${shardId} disconnected`);
       this.logger.warn(
         {
           shardId,
@@ -216,27 +270,32 @@ export class DiscordConnector implements ConnectorPlugin {
 
     client.on("shardReconnecting", (shardId) => {
       if (client !== this.client) return;
+      this.updateHealth("reconnecting", `Discord shard ${shardId} reconnecting`);
       this.logger.warn({ shardId }, "Discord shard reconnecting");
     });
 
     client.on("shardResume", (shardId, replayedEvents) => {
       if (client !== this.client) return;
       this.lastHealthyAtMs = Date.now();
+      this.updateHealth("ready", `Discord shard ${shardId} resumed`);
       this.logger.info({ shardId, replayedEvents }, "Discord shard resumed");
     });
 
     client.on("error", (error) => {
       if (client !== this.client) return;
+      this.updateHealth("degraded", "Discord client error", error);
       this.logger.warn({ err: error }, "Discord client error");
     });
 
     client.on("shardError", (error, shardId) => {
       if (client !== this.client) return;
+      this.updateHealth("degraded", `Discord shard ${shardId} error`, error);
       this.logger.warn({ err: error, shardId }, "Discord shard error");
     });
 
     client.on("invalidated", () => {
       if (client !== this.client) return;
+      this.updateHealth("reconnecting", "Discord session invalidated");
       this.logger.error("Discord session invalidated; forcing reconnect");
       void this.forceReconnect("session_invalidated");
     });
@@ -282,15 +341,18 @@ export class DiscordConnector implements ConnectorPlugin {
 
     if (client.isReady()) {
       this.lastHealthyAtMs = Date.now();
+      this.updateHealth("ready", "Discord gateway connected");
       return;
     }
 
     const staleMs = Date.now() - this.lastHealthyAtMs;
     const thresholdMs = this.config.reconnectStaleMs ?? DEFAULT_RECONNECT_STALE_MS;
     if (staleMs < thresholdMs) {
+      this.updateHealth("degraded", `Discord gateway is not ready (${staleMs}ms)`);
       return;
     }
 
+    this.updateHealth("reconnecting", "Discord watchdog is forcing a reconnect");
     this.logger.warn({ staleMs, thresholdMs }, "Discord connector remained not-ready for too long; forcing reconnect");
     await this.forceReconnect("watchdog_not_ready");
   }
@@ -301,6 +363,7 @@ export class DiscordConnector implements ConnectorPlugin {
     }
 
     this.reconnectInFlight = true;
+    this.updateHealth("reconnecting", `Discord reconnect requested (${reason})`);
     const previousClient = this.client;
 
     try {
@@ -318,10 +381,32 @@ export class DiscordConnector implements ConnectorPlugin {
       await nextClient.login(this.botToken);
       this.logger.info({ reason }, "Discord reconnect login submitted");
     } catch (error) {
+      this.updateHealth("failed", `Discord reconnect failed (${reason})`, error);
       this.logger.error({ err: error, reason }, "Failed to force Discord reconnect");
     } finally {
       this.reconnectInFlight = false;
     }
+  }
+
+  private updateHealth(status: ConnectorHealthStatus, detail: string, error?: unknown): void {
+    const now = Date.now();
+    const lastError = error === undefined ? this.health.lastError : error instanceof Error ? error.message : String(error);
+    const lastErrorAtMs = error === undefined ? this.health.lastErrorAtMs : now;
+    const statusChanged = this.health.status !== status;
+    if (status === "ready") {
+      this.lastReadyAtMs = now;
+    }
+
+    this.health = {
+      ...this.health,
+      status,
+      detail,
+      updatedAtMs: now,
+      statusSinceMs: statusChanged ? now : this.health.statusSinceMs,
+      ...(this.lastReadyAtMs ? { lastReadyAtMs: this.lastReadyAtMs } : {}),
+      ...(lastError ? { lastError } : {}),
+      ...(lastErrorAtMs ? { lastErrorAtMs } : {}),
+    };
   }
 
   private parseCloseEvent(event: unknown): Record<string, unknown> {

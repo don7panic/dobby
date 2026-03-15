@@ -72,6 +72,21 @@ export interface ConnectorTypingEnvelope {
   threadId?: string;
 }
 
+export type ConnectorHealthStatus = "starting" | "ready" | "degraded" | "reconnecting" | "failed" | "stopped";
+
+export interface ConnectorHealth {
+  status: ConnectorHealthStatus;
+  statusSinceMs: number;
+  updatedAtMs: number;
+  detail?: string;
+  lastReadyAtMs?: number;
+  lastInboundAtMs?: number;
+  lastOutboundAtMs?: number;
+  lastErrorAtMs?: number;
+  lastError?: string;
+  restartCount?: number;
+}
+
 export interface ConnectorContext {
   emitInbound: (msg: InboundEnvelope) => Promise<void>;
   emitControl: (event: {
@@ -104,6 +119,7 @@ export interface ConnectorPlugin {
   start(ctx: ConnectorContext): Promise<void>;
   send(message: OutboundEnvelope): Promise<ConnectorSendResult>;
   sendTyping?(message: ConnectorTypingEnvelope): Promise<void>;
+  getHealth?(): ConnectorHealth;
   stop(): Promise<void>;
 }
 

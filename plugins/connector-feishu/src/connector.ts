@@ -7,6 +7,8 @@ import {
 import type {
   ConnectorCapabilities,
   ConnectorContext,
+  ConnectorHealth,
+  ConnectorHealthStatus,
   ConnectorPlugin,
   ConnectorSendResult,
   GatewayLogger,
@@ -30,6 +32,18 @@ export type FeishuMessageFormat = "text" | "card_markdown";
 
 const FEISHU_CARD_MAX_TEXT_LENGTH = 8_000;
 const FEISHU_TEXT_MAX_TEXT_LENGTH = 12_000;
+const FEISHU_WS_OPEN = 1;
+const FEISHU_CONNECT_BOOTSTRAP_MS = 30_000;
+
+function createHealth(status: ConnectorHealthStatus, detail?: string): ConnectorHealth {
+  const now = Date.now();
+  return {
+    status,
+    statusSinceMs: now,
+    updatedAtMs: now,
+    ...(detail ? { detail } : {}),
+  };
+}
 
 function resolveDomain(domain?: "feishu" | "lark"): string {
   return domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
@@ -79,6 +93,10 @@ export class FeishuConnector implements ConnectorPlugin {
   private ctx: ConnectorContext | null = null;
   private client: Lark.Client | null = null;
   private wsClient: Lark.WSClient | null = null;
+  private stopped = false;
+  private health = createHealth("stopped");
+  private lastReadyAtMs: number | undefined;
+  private startRequestedAtMs = 0;
 
   constructor(
     id: string,
@@ -111,6 +129,9 @@ export class FeishuConnector implements ConnectorPlugin {
     };
 
     this.ctx = ctx;
+    this.stopped = false;
+    this.startRequestedAtMs = Date.now();
+    this.updateHealth("starting", "Starting Feishu persistent connection");
     this.client = new Lark.Client(baseConfig);
     this.wsClient = new Lark.WSClient(baseConfig);
     await this.logAppSubscriptionState();
@@ -132,6 +153,7 @@ export class FeishuConnector implements ConnectorPlugin {
           },
           "Feishu inbound event received",
         );
+        this.updateHealth("ready", "Feishu inbound event received");
 
         const inbound = await mapFeishuMessageEvent({
           event,
@@ -167,6 +189,7 @@ export class FeishuConnector implements ConnectorPlugin {
     await this.wsClient.start({
       eventDispatcher: dispatcher,
     });
+    this.updateHealth("starting", "Feishu websocket bootstrap submitted");
 
     this.logger.info(
       {
@@ -177,6 +200,35 @@ export class FeishuConnector implements ConnectorPlugin {
       },
       "Feishu connector ready",
     );
+  }
+
+  getHealth(): ConnectorHealth {
+    if (this.stopped || !this.wsClient) {
+      return this.health;
+    }
+
+    if (this.isWsOpen()) {
+      this.updateHealth("ready", "Feishu persistent connection open");
+      return this.health;
+    }
+
+    const reconnectInfo = this.wsClient.getReconnectInfo();
+    if (reconnectInfo.nextConnectTime > Date.now()) {
+      this.updateHealth("reconnecting", "Feishu websocket reconnect scheduled");
+      return this.health;
+    }
+
+    if (Date.now() - this.startRequestedAtMs < FEISHU_CONNECT_BOOTSTRAP_MS) {
+      this.updateHealth("starting", "Feishu websocket bootstrap in progress");
+      return this.health;
+    }
+
+    if (reconnectInfo.lastConnectTime > 0) {
+      this.updateHealth("degraded", "Feishu websocket is disconnected");
+      return this.health;
+    }
+
+    return this.health;
   }
 
   async send(message: OutboundEnvelope): Promise<ConnectorSendResult> {
@@ -271,11 +323,13 @@ export class FeishuConnector implements ConnectorPlugin {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     const wsClient = this.wsClient;
     this.wsClient = null;
     this.client = null;
     this.ctx = null;
     wsClient?.close({ force: true });
+    this.updateHealth("stopped", "Feishu connector stopped");
   }
 
   private async logAppSubscriptionState(): Promise<void> {
@@ -368,6 +422,37 @@ export class FeishuConnector implements ConnectorPlugin {
       format,
       msgType: this.renderMessageType(format),
       content: this.renderContent(message.text, format),
+    };
+  }
+
+  private isWsOpen(): boolean {
+    const wsClient = this.wsClient as unknown as {
+      wsConfig?: {
+        getWSInstance?: () => { readyState?: number } | null;
+      };
+    } | null;
+    const readyState = wsClient?.wsConfig?.getWSInstance?.()?.readyState;
+    return readyState === FEISHU_WS_OPEN;
+  }
+
+  private updateHealth(status: ConnectorHealthStatus, detail: string, error?: unknown): void {
+    const now = Date.now();
+    const lastError = error === undefined ? this.health.lastError : error instanceof Error ? error.message : String(error);
+    const lastErrorAtMs = error === undefined ? this.health.lastErrorAtMs : now;
+    const statusChanged = this.health.status !== status;
+    if (status === "ready") {
+      this.lastReadyAtMs = now;
+    }
+
+    this.health = {
+      ...this.health,
+      status,
+      detail,
+      updatedAtMs: now,
+      statusSinceMs: statusChanged ? now : this.health.statusSinceMs,
+      ...(this.lastReadyAtMs ? { lastReadyAtMs: this.lastReadyAtMs } : {}),
+      ...(lastError ? { lastError } : {}),
+      ...(lastErrorAtMs ? { lastErrorAtMs } : {}),
     };
   }
 }
