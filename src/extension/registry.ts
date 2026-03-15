@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { SupervisedConnector } from "../core/connector-supervisor.js";
 import type {
   ConnectorContributionModule,
   ConnectorPlugin,
@@ -191,13 +192,22 @@ export class ExtensionRegistry {
           `Connector instance '${instanceId}' references unknown contribution '${instanceConfig.type}'`,
         );
       }
-      const connector = await contribution.createInstance({
-        instanceId,
-        config: instanceConfig.config,
-        host: context,
-        attachmentsRoot: join(attachmentsBaseDir, instanceId),
-      });
-      instances.push(connector);
+      const attachmentsRoot = join(attachmentsBaseDir, instanceId);
+      const createInstance = () =>
+        contribution.createInstance({
+          instanceId,
+          config: instanceConfig.config,
+          host: context,
+          attachmentsRoot,
+        });
+      const connector = await createInstance();
+      instances.push(
+        new SupervisedConnector({
+          initialConnector: connector,
+          createInstance,
+          logger: context.logger,
+        }),
+      );
     }
 
     return instances;

@@ -394,6 +394,9 @@ npm run start -- cron add daily-report \
 
 ## Discord 连接器的当前行为
 
+- 所有 connector 都会经过宿主侧 health supervisor 包装
+  - 统一暴露 `starting / ready / degraded / reconnecting / failed / stopped` 状态
+  - 若 connector 长时间停留在 `starting`、`degraded`、`reconnecting` 或 `failed`，宿主会 stop 并重建实例
 - guild channel 仍按显式 binding 匹配
 - DM 可通过 `bindings.default` 回落到默认 route
 - 线程消息使用父频道 ID 做 binding 查找
