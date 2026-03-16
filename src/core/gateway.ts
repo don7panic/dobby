@@ -98,11 +98,35 @@ export class Gateway {
     await this.options.dedupStore.load();
     this.options.dedupStore.startAutoFlush();
 
-    for (const connector of this.options.connectors) {
-      await connector.start({
-        emitInbound: async (message) => this.handleInbound(message),
-        emitControl: async (event) => this.handleControl(event),
-      });
+    const startedConnectors: ConnectorPlugin[] = [];
+    try {
+      for (const connector of this.options.connectors) {
+        await connector.start({
+          emitInbound: async (message) => this.handleInbound(message),
+          emitControl: async (event) => this.handleControl(event),
+        });
+        startedConnectors.push(connector);
+      }
+    } catch (error) {
+      for (const connector of startedConnectors.reverse()) {
+        try {
+          await connector.stop();
+        } catch (stopError) {
+          this.options.logger.warn(
+            { err: stopError, connectorId: connector.id },
+            "Failed to roll back connector after startup failure",
+          );
+        }
+      }
+
+      this.options.dedupStore.stopAutoFlush();
+      try {
+        await this.options.dedupStore.flush();
+      } catch (flushError) {
+        this.options.logger.warn({ err: flushError }, "Failed to flush dedup store after startup failure");
+      }
+
+      throw error;
     }
 
     this.started = true;

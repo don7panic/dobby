@@ -72,6 +72,7 @@ export class SupervisedConnector implements ConnectorPlugin {
   private restartTimer: NodeJS.Timeout | null = null;
   private restartFailures = 0;
   private restartCount = 0;
+  private activeRestart: Promise<void> | null = null;
 
   constructor(options: SupervisedConnectorOptions) {
     this.current = options.initialConnector;
@@ -124,7 +125,7 @@ export class SupervisedConnector implements ConnectorPlugin {
     this.generation += 1;
     const generation = this.generation;
     try {
-      await this.current.start(this.createManagedContext(generation));
+      await this.startConnectorInstance(this.current, generation, "initial connector start");
       this.syncCurrentHealth("Connector started");
       this.startMonitor();
     } catch (error) {
@@ -186,6 +187,7 @@ export class SupervisedConnector implements ConnectorPlugin {
 
     try {
       await this.current.stop();
+      await this.activeRestart;
     } finally {
       this.updateHealth({ status: "stopped", detail: "Connector stopped by host" });
       this.stopping = false;
@@ -251,6 +253,10 @@ export class SupervisedConnector implements ConnectorPlugin {
         if (this.started && !this.stopping && !this.restarting && this.health.status === "starting") {
           this.updateHealth({ status: "ready", detail: fallbackDetail ?? "Connector ready" });
         }
+        return;
+      }
+
+      if (observed.status === "stopped" && this.started && !this.stopping) {
         return;
       }
 
@@ -377,14 +383,24 @@ export class SupervisedConnector implements ConnectorPlugin {
     });
 
     if (delayMs === 0) {
-      void this.restart(reason);
+      const restart = this.restart(reason);
+      this.activeRestart = restart.finally(() => {
+        if (this.activeRestart === restart) {
+          this.activeRestart = null;
+        }
+      });
       return;
     }
 
     this.logger.warn({ connectorId: this.id, reason, delayMs }, "Scheduling supervised connector restart");
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
-      void this.restart(reason);
+      const restart = this.restart(reason);
+      this.activeRestart = restart.finally(() => {
+        if (this.activeRestart === restart) {
+          this.activeRestart = null;
+        }
+      });
     }, delayMs);
   }
 
@@ -422,10 +438,25 @@ export class SupervisedConnector implements ConnectorPlugin {
         this.logger.warn({ err: error, connectorId: this.id, reason }, "Failed to stop connector before restart");
       });
 
+      if (!this.started || this.stopping || !this.ctx) {
+        return;
+      }
+
       const candidate = await this.createInstance();
       this.assertCompatible(candidate);
+      if (!this.started || this.stopping || !this.ctx) {
+        await this.safeStopConnector(candidate, "Failed to clean up replacement connector after stop during restart");
+        return;
+      }
       this.updateHealth({ status: "starting", detail: `Starting replacement connector (${reason})` });
-      await candidate.start(this.createManagedContext(nextGeneration));
+      await this.startConnectorInstance(candidate, nextGeneration, `replacement connector start (${reason})`);
+      if (!this.started || this.stopping || !this.ctx || this.generation !== nextGeneration) {
+        await this.safeStopConnector(
+          candidate,
+          "Failed to clean up replacement connector after stop during replacement start",
+        );
+        return;
+      }
       this.current = candidate;
       this.restartFailures = 0;
       this.restartCount += 1;
@@ -450,6 +481,27 @@ export class SupervisedConnector implements ConnectorPlugin {
 
     if (shouldRetry) {
       this.scheduleRestart(`retry_after_${reason}`, false);
+    }
+  }
+
+  private async startConnectorInstance(
+    connector: ConnectorPlugin,
+    generation: number,
+    phase: string,
+  ): Promise<void> {
+    try {
+      await connector.start(this.createManagedContext(generation));
+    } catch (error) {
+      await this.safeStopConnector(connector, `Failed to clean up connector after ${phase}`);
+      throw error;
+    }
+  }
+
+  private async safeStopConnector(connector: ConnectorPlugin, errorMessage: string): Promise<void> {
+    try {
+      await connector.stop();
+    } catch (error) {
+      this.logger.warn({ err: error, connectorId: connector.id }, errorMessage);
     }
   }
 
