@@ -1,6 +1,6 @@
 {
   "name": "@dobby.ai/plugin-sdk",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
   "description": "Public plugin contracts for dobby extensions",
