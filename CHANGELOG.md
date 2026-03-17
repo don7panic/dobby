@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/don7panic/dobby/compare/dobby-v0.3.0...dobby-v0.3.1) (2026-03-17)
+
+
+### Bug Fixes
+
+* align extension plugin-sdk peer metadata ([1b2dca2](https://github.com/don7panic/dobby/commit/1b2dca20bd2d096e51bda8bb1a8c6a2fa409fa9c))
+
 ## [0.3.0](https://github.com/don7panic/dobby/compare/dobby-v0.2.0...dobby-v0.3.0) (2026-03-16)
 
 
