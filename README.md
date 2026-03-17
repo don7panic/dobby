@@ -192,6 +192,12 @@ dobby config schema show <contributionId> [--json]
 
 配置变更建议直接编辑 `gateway.json`，再通过 `dobby doctor` 或 `dobby start` 做校验。
 
+连接器状态：
+
+```bash
+dobby connector status [connectorId] [--json]
+```
+
 扩展管理：
 
 ```bash
@@ -397,6 +403,8 @@ npm run start -- cron add daily-report \
 - 所有 connector 都会经过宿主侧 health supervisor 包装
   - 统一暴露 `starting / ready / degraded / reconnecting / failed / stopped` 状态
   - 若 connector 长时间停留在 `starting`、`degraded`、`reconnecting` 或 `failed`，宿主会 stop 并重建实例
+- 运行中的 gateway 会把 connector 状态快照写到 `<data.rootDir>/state/connectors-status.json`
+  - `dobby connector status` 会读取这份快照并展示当前 connector 健康状态
 - guild channel 仍按显式 binding 匹配
 - DM 可通过 `bindings.default` 回落到默认 route
 - 线程消息使用父频道 ID 做 binding 查找

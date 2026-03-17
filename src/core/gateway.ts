@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { EventForwarder } from "../agent/event-forwarder.js";
+import { statusItemFromConnector, type ConnectorStatusItem } from "./connector-status.js";
 import type { Executor } from "../sandbox/executor.js";
 import { parseControlCommand, type ControlCommand } from "./control-command.js";
 import type { DedupStore } from "./dedup-store.js";
@@ -144,6 +145,12 @@ export class Gateway {
     await this.options.runtimeRegistry.closeAll();
 
     this.started = false;
+  }
+
+  listConnectorStatuses(): ConnectorStatusItem[] {
+    return this.options.connectors
+      .map((connector) => statusItemFromConnector(connector))
+      .sort((a, b) => a.connectorId.localeCompare(b.connectorId));
   }
 
   async handleScheduled(request: ScheduledExecutionRequest): Promise<void> {

@@ -18,6 +18,7 @@ const publishTargets = [
   { dir: "plugins/provider-codex-cli" },
   { dir: "plugins/provider-claude-cli" },
   { dir: "plugins/provider-claude" },
+  { dir: "plugins/sandbox-core" },
   { dir: "." },
 ];
 
@@ -26,7 +27,7 @@ function printUsage() {
     "Usage: node scripts/publish-packages.mjs [--dry-run] [--tag <tag>] [--otp <code>] [--allow-dirty] [--skip-existing] [--provenance] [--package <dir>]",
   );
   console.log("");
-  console.log("Publishes plugin-sdk, connector/provider packages, then the root @dobby.ai/dobby package.");
+  console.log("Publishes plugin-sdk, connector/provider/sandbox packages, then the root @dobby.ai/dobby package.");
   console.log("");
   console.log("Options:");
   console.log("  --dry-run      Run npm publish --dry-run for every package");

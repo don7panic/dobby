@@ -92,6 +92,7 @@ test("top-level help keeps bootstrap, inspect, install, validate, and ops comman
   assert.match(help, /start/);
   assert.match(help, /init/);
   assert.match(help, /config/);
+  assert.match(help, /connector/);
   assert.match(help, /extension/);
   assert.match(help, /doctor/);
   assert.match(help, /cron/);
@@ -99,4 +100,13 @@ test("top-level help keeps bootstrap, inspect, install, validate, and ops comman
   assert.equal(help.includes("bot"), false);
   assert.equal(help.includes("binding"), false);
   assert.equal(help.includes("route"), false);
+});
+
+test("connector help shows status subcommand", () => {
+  const program = buildProgram();
+  const connectorCommand = program.commands.find((command) => command.name() === "connector");
+  assert.ok(connectorCommand);
+
+  const help = connectorCommand.helpInformation();
+  assert.match(help, /status \[options\] \[connectorId\]/);
 });

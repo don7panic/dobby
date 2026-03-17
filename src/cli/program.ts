@@ -7,6 +7,7 @@ import {
   runConfigSchemaShowCommand,
   runConfigShowCommand,
 } from "./commands/config.js";
+import { runConnectorStatusCommand } from "./commands/connector.js";
 import {
   runCronAddCommand,
   runCronListCommand,
@@ -159,6 +160,20 @@ export function buildProgram(): Command {
     .action(async (opts) => {
       await runDoctorCommand({
         fix: Boolean(opts.fix),
+      });
+    });
+
+  const connectorCommand = program.command("connector").description("Inspect runtime connector status");
+
+  connectorCommand
+    .command("status")
+    .description("Show status for all connectors or one connector")
+    .argument("[connectorId]", "Connector instance ID")
+    .option("--json", "Output JSON", false)
+    .action(async (connectorId: string | undefined, opts) => {
+      await runConnectorStatusCommand({
+        ...(typeof connectorId === "string" ? { connectorId } : {}),
+        json: Boolean(opts.json),
       });
     });
 

@@ -2,6 +2,12 @@ import { dirname, join } from "node:path";
 import { loadCronConfig } from "../../cron/config.js";
 import { CronService } from "../../cron/service.js";
 import { CronStore } from "../../cron/store.js";
+import {
+  connectorStatusSnapshotPath,
+  DEFAULT_CONNECTOR_STATUS_PUBLISH_INTERVAL_MS,
+  DEFAULT_CONNECTOR_STATUS_STALE_AFTER_MS,
+  writeConnectorStatusSnapshot,
+} from "../../core/connector-status.js";
 import { DedupStore } from "../../core/dedup-store.js";
 import { Gateway } from "../../core/gateway.js";
 import { BindingResolver, loadGatewayConfig, RouteResolver } from "../../core/routing.js";
@@ -113,6 +119,8 @@ function selectSandboxInstances(config: Awaited<ReturnType<typeof loadGatewayCon
 export async function runStartCommand(): Promise<void> {
   const configPath = resolveConfigPath();
   const config = await loadGatewayConfig(configPath);
+  const gatewayStartedAtMs = Date.now();
+  const connectorStatusPath = connectorStatusSnapshotPath(config.data.stateDir);
 
   await ensureDataDirs(config.data.rootDir);
 
@@ -191,8 +199,51 @@ export async function runStartCommand(): Promise<void> {
     logger,
   });
 
+  const publishConnectorStatuses = async () => {
+    await writeConnectorStatusSnapshot(connectorStatusPath, {
+      schemaVersion: 1,
+      generatedAtMs: Date.now(),
+      staleAfterMs: DEFAULT_CONNECTOR_STATUS_STALE_AFTER_MS,
+      gateway: {
+        pid: process.pid,
+        startedAtMs: gatewayStartedAtMs,
+      },
+      items: gateway.listConnectorStatuses(),
+    });
+  };
+
+  let connectorStatusTimer: NodeJS.Timeout | null = null;
+
+  const startConnectorStatusPublisher = async () => {
+    try {
+      await publishConnectorStatuses();
+    } catch (error) {
+      logger.warn({ err: error, connectorStatusPath }, "Failed to write initial connector status snapshot");
+    }
+
+    connectorStatusTimer = setInterval(() => {
+      void publishConnectorStatuses().catch((error) => {
+        logger.warn({ err: error, connectorStatusPath }, "Failed to refresh connector status snapshot");
+      });
+    }, DEFAULT_CONNECTOR_STATUS_PUBLISH_INTERVAL_MS);
+  };
+
+  const stopConnectorStatusPublisher = async () => {
+    if (connectorStatusTimer) {
+      clearInterval(connectorStatusTimer);
+      connectorStatusTimer = null;
+    }
+
+    try {
+      await publishConnectorStatuses();
+    } catch (error) {
+      logger.warn({ err: error, connectorStatusPath }, "Failed to write final connector status snapshot");
+    }
+  };
+
   await gateway.start();
   await cronService.start();
+  await startConnectorStatusPublisher();
   logger.info(
     {
       configPath,
@@ -203,10 +254,21 @@ export async function runStartCommand(): Promise<void> {
     "Gateway started",
   );
 
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    if (shuttingDown) {
+      return;
+    }
+
+    shuttingDown = true;
     logger.info({ signal }, "Shutting down gateway");
+    if (connectorStatusTimer) {
+      clearInterval(connectorStatusTimer);
+      connectorStatusTimer = null;
+    }
     await cronService.stop();
     await gateway.stop();
+    await stopConnectorStatusPublisher();
     await hostExecutor.close();
     await closeProviderInstances(providers, logger);
     await closeSandboxInstances(sandboxes, logger);
