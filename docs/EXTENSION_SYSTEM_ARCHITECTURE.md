@@ -97,7 +97,8 @@ V3 将扩展系统对齐 VSCode extension 使用体验：
 ## 7. 插件包契约（发布侧）
 
 - 第三方依赖放在插件自身 `dependencies`。
-- `@dobby.ai/plugin-sdk` 作为插件契约依赖（通常 `peerDependencies`）。
+- `@dobby.ai/plugin-sdk` 作为插件契约依赖（`peerDependencies`，且不应标记为 optional）。
+- `@dobby.ai/plugin-sdk` 的 peer range 需要与当前已发布 sdk 版本保持兼容，避免 `dobby init` / `extension install` 后运行时缺包。
 - connector capability 需显式声明 `updateStrategy`（`edit | final_only | append`），由网关统一决定出站发送策略（update / final-only / append）。
 - 开发态可通过 `devDependencies` 使用 `file:../plugin-sdk`，保证本地类型可用；运行态不依赖宿主回退。
 - 插件运行时不得依赖宿主源码路径或宿主 dist 路径。

@@ -26,12 +26,7 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@dobby.ai/plugin-sdk": "^0.1.0"
-  },
-  "peerDependenciesMeta": {
-    "@dobby.ai/plugin-sdk": {
-      "optional": true
-    }
+    "@dobby.ai/plugin-sdk": "^0.2.0"
   },
   "devDependencies": {
     "@dobby.ai/plugin-sdk": "file:../plugin-sdk",

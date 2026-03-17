@@ -443,7 +443,7 @@ npm run plugins:setup:local
 
 - `plugins/*` 是扩展源码，不是运行时加载入口
 - 本地扩展安装到 extension store 后，才会被宿主识别
-- `@dobby.ai/plugin-sdk` 在插件里按 `peerDependencies` 暴露，开发期通过 `file:../plugin-sdk` 提供
+- `@dobby.ai/plugin-sdk` 在插件里按非 optional 的 `peerDependencies` 暴露，开发期通过 `file:../plugin-sdk` 提供
 
 ## 检查与测试
 
