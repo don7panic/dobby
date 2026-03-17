@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/don7panic/dobby/compare/dobby-v0.3.1...dobby-v0.4.0) (2026-03-17)
+
+
+### Features
+
+* **connector:** add connector status snapshots ([8606a7d](https://github.com/don7panic/dobby/commit/8606a7d3700fd65047d145877d12c1cdcd959548))
+
 ## [0.3.1](https://github.com/don7panic/dobby/compare/dobby-v0.3.0...dobby-v0.3.1) (2026-03-17)
 
 
