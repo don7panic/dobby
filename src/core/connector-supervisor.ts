@@ -274,14 +274,39 @@ export class SupervisedConnector implements ConnectorPlugin {
         }
 
         this.noteInbound();
-        await this.ctx.emitInbound(message);
+        try {
+          await this.ctx.emitInbound(message);
+        } catch (error) {
+          this.logger.error(
+            {
+              err: error,
+              connectorId: this.id,
+              messageId: message.messageId,
+              sourceType: message.source.type,
+              sourceId: message.source.id,
+            },
+            "Connector inbound handler failed",
+          );
+        }
       },
       emitControl: async (event) => {
         if (generation !== this.generation || !this.ctx) {
           return;
         }
 
-        await this.ctx.emitControl(event);
+        try {
+          await this.ctx.emitControl(event);
+        } catch (error) {
+          this.logger.error(
+            {
+              err: error,
+              connectorId: this.id,
+              chatId: event.chatId,
+              threadId: event.threadId ?? null,
+            },
+            "Connector control handler failed",
+          );
+        }
       },
     };
   }
@@ -340,7 +365,7 @@ export class SupervisedConnector implements ConnectorPlugin {
     };
 
     this.health = merged;
-    if (statusChanged || merged.detail !== previous.detail) {
+    if (statusChanged || merged.lastError !== previous.lastError || (merged.status !== "ready" && merged.detail !== previous.detail)) {
       this.logHealthTransition(previous, merged);
     }
   }

@@ -534,13 +534,13 @@ export class EventForwarder {
   private async finalizeEdit(): Promise<void> {
     await this.flushNow();
 
-    if (this.responseText.trim().length === 0) {
-      await this.sendEditPrimary("(completed with no text response)");
-      return;
-    }
-
-    const chunks = splitForMaxLength(this.responseText, this.maxTextLength);
     try {
+      if (this.responseText.trim().length === 0) {
+        await this.sendEditPrimary("(completed with no text response)");
+        return;
+      }
+
+      const chunks = splitForMaxLength(this.responseText, this.maxTextLength);
       await this.sendEditPrimary(chunks[0] ?? "");
 
       for (const chunk of chunks.slice(1)) {
@@ -554,7 +554,7 @@ export class EventForwarder {
           chatId: this.inbound.chatId,
           targetMessageId: this.rootMessageId,
         },
-        "Failed to send split final response",
+        "Failed to send final response",
       );
     }
   }

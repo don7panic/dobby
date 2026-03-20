@@ -23,6 +23,27 @@ function createLogger(): GatewayLogger {
   } as unknown as GatewayLogger;
 }
 
+function createCapturingLogger() {
+  const entries: Array<{ level: "error" | "warn" | "info" | "debug"; message: string; payload: unknown[] }> = [];
+  return {
+    entries,
+    logger: {
+      error: (...payload: unknown[]) => {
+        entries.push({ level: "error", message: String(payload[payload.length - 1] ?? ""), payload });
+      },
+      warn: (...payload: unknown[]) => {
+        entries.push({ level: "warn", message: String(payload[payload.length - 1] ?? ""), payload });
+      },
+      info: (...payload: unknown[]) => {
+        entries.push({ level: "info", message: String(payload[payload.length - 1] ?? ""), payload });
+      },
+      debug: (...payload: unknown[]) => {
+        entries.push({ level: "debug", message: String(payload[payload.length - 1] ?? ""), payload });
+      },
+    } as unknown as GatewayLogger,
+  };
+}
+
 function createHealth(status: ConnectorHealthStatus, detail: string): ConnectorHealth {
   const now = Date.now();
   return {
@@ -277,6 +298,59 @@ test("supervisor stop waits for in-flight replacement start and cleans the repla
     assert.equal(connector.getHealth().status, "stopped");
   } finally {
     releaseReplacementStart();
+    await connector.stop();
+  }
+});
+
+test("supervisor swallows inbound handler failures from connector callbacks", async () => {
+  const first = new FakeConnector("discord.main", "discord", { startStatus: "ready" });
+  const { entries, logger } = createCapturingLogger();
+
+  const connector = new SupervisedConnector({
+    initialConnector: first,
+    createInstance: async () => first,
+    logger,
+  });
+
+  try {
+    await connector.start({
+      emitInbound: async () => {
+        throw new Error("inbound failed");
+      },
+      emitControl: async () => {},
+    });
+
+    await assert.doesNotReject(first.emitInbound("hello"));
+    assert.equal(entries.some((entry) => entry.message === "Connector inbound handler failed"), true);
+  } finally {
+    await connector.stop();
+  }
+});
+
+test("supervisor does not log ready-state detail churn as health transitions", async () => {
+  const first = new FakeConnector("discord.main", "discord", { startStatus: "ready" });
+  const { entries, logger } = createCapturingLogger();
+
+  const connector = new SupervisedConnector({
+    initialConnector: first,
+    createInstance: async () => first,
+    logger,
+  });
+
+  try {
+    await connector.start({
+      emitInbound: async () => {},
+      emitControl: async () => {},
+    });
+
+    entries.length = 0;
+    await first.emitInbound("hello");
+    connector.getHealth();
+    await connector.send(createOutbound());
+    connector.getHealth();
+
+    assert.equal(entries.some((entry) => entry.message === "Connector health changed"), false);
+  } finally {
     await connector.stop();
   }
 });

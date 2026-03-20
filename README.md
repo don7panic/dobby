@@ -48,6 +48,20 @@ dobby start
 DOBBY_CONFIG_PATH=./config/gateway.json dobby start
 ```
 
+如果你希望把仓库内维护的 `skills/` 同步到本机 dobby 根目录，直接运行：
+
+```bash
+./scripts/install-project-skills.sh
+```
+
+默认会把当前仓库下的 `skills/*` 同步到 `~/.dobby/skills/*`；如果设置了 `DOBBY_CONFIG_PATH`，则会同步到该配置文件所在目录的 `skills/`。也可以直接传目标根目录：
+
+```bash
+./scripts/install-project-skills.sh ~/.dobby
+```
+
+对应的 `provider.pi.agentDir` 建议指向 dobby 根目录本身，例如 `~/.dobby`。
+
 ## What you can plug in
 
 - Entrypoints: `connector.discord`、`connector.feishu`、cron

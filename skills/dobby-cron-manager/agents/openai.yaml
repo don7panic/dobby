@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dobby Cron Manager"
+  short_description: "Translate natural language into dobby cron ops"
+  default_prompt: "Use $dobby-cron-manager to create, inspect, or update dobby cron jobs from a natural-language request."

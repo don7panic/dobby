@@ -25,6 +25,53 @@ interface ScheduleInput {
   tz?: string;
 }
 
+function printMarkdown(lines: string[]): void {
+  for (const line of lines) {
+    console.log(line);
+  }
+}
+
+function formatCode(value: string): string {
+  return `\`${value}\``;
+}
+
+function formatTimestamp(timestampMs?: number): string {
+  return timestampMs !== undefined ? formatCode(new Date(timestampMs).toISOString()) : "-";
+}
+
+function formatDelivery(job: ScheduledJob): string {
+  const segments = [
+    job.delivery.connectorId,
+    job.delivery.routeId,
+    job.delivery.channelId,
+    ...(job.delivery.threadId ? [job.delivery.threadId] : []),
+  ];
+  return formatCode(segments.join("/"));
+}
+
+function buildJobMarkdown(job: ScheduledJob, headingLevel = 3): string[] {
+  const heading = `${"#".repeat(headingLevel)} ${formatCode(job.id)}`;
+  const lines = [
+    heading,
+    `- name: ${job.name}`,
+    `- state: ${job.enabled ? "enabled" : "paused"}`,
+    `- schedule: ${formatCode(describeSchedule(job.schedule))}`,
+    `- next run: ${formatTimestamp(job.state.nextRunAtMs)}`,
+    `- last run: ${formatTimestamp(job.state.lastRunAtMs)}`,
+    `- last status: ${job.state.lastStatus ?? "-"}`,
+    `- delivery: ${formatDelivery(job)}`,
+  ];
+
+  if (job.state.manualRunRequestedAtMs !== undefined) {
+    lines.push(`- manual run queued at: ${formatTimestamp(job.state.manualRunRequestedAtMs)}`);
+  }
+  if (job.state.lastError) {
+    lines.push(`- last error: ${job.state.lastError}`);
+  }
+
+  return lines;
+}
+
 function slugify(value: string): string {
   const normalized = value
     .trim()
@@ -151,10 +198,14 @@ export async function runCronAddCommand(options: {
   };
 
   await context.store.upsertJob(job);
-  console.log(`Added cron job ${job.id}`);
-  console.log(`- schedule: ${describeSchedule(job.schedule)}`);
-  console.log(`- delivery: ${job.delivery.connectorId}/${job.delivery.routeId}/${job.delivery.channelId}`);
-  console.log(`- cron config: ${context.cronConfigPath}`);
+  printMarkdown([
+    "## Cron Job Added",
+    `- id: ${formatCode(job.id)}`,
+    `- name: ${job.name}`,
+    `- schedule: ${formatCode(describeSchedule(job.schedule))}`,
+    `- delivery: ${formatDelivery(job)}`,
+    `- cron config: ${formatCode(context.cronConfigPath)}`,
+  ]);
 }
 
 export async function runCronListCommand(options: {
@@ -172,23 +223,26 @@ export async function runCronListCommand(options: {
   }
 
   if (jobs.length === 0) {
-    console.log(`No cron jobs configured (${context.cronConfigPath})`);
+    printMarkdown([
+      "## Cron Jobs",
+      "",
+      "_No cron jobs configured._",
+      "",
+      `- cron config: ${formatCode(context.cronConfigPath)}`,
+    ]);
     return;
   }
 
-  console.log(`Cron jobs (${context.cronConfigPath}):`);
+  const lines = [
+    "## Cron Jobs",
+    "",
+    `- cron config: ${formatCode(context.cronConfigPath)}`,
+    `- total jobs: ${jobs.length}`,
+  ];
   for (const job of jobs) {
-    const next = job.state.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : "-";
-    const last = job.state.lastRunAtMs ? new Date(job.state.lastRunAtMs).toISOString() : "-";
-    const schedule = describeSchedule(job.schedule);
-    console.log(`- ${job.id} [${job.enabled ? "enabled" : "paused"}] ${job.name}`);
-    console.log(`  schedule=${schedule}`);
-    console.log(`  next=${next} last=${last} status=${job.state.lastStatus ?? "-"}`);
-    if (job.state.manualRunRequestedAtMs !== undefined) {
-      console.log(`  manualRun=${new Date(job.state.manualRunRequestedAtMs).toISOString()}`);
-    }
-    console.log(`  delivery=${job.delivery.connectorId}/${job.delivery.routeId}/${job.delivery.channelId}`);
+    lines.push("", ...buildJobMarkdown(job));
   }
+  printMarkdown(lines);
 }
 
 export async function runCronStatusCommand(options: {
@@ -215,19 +269,12 @@ export async function runCronStatusCommand(options: {
   }
 
   if (target) {
-    console.log(`Cron status for ${target.id}`);
-    console.log(`- name: ${target.name}`);
-    console.log(`- enabled: ${target.enabled}`);
-    console.log(`- schedule: ${describeSchedule(target.schedule)}`);
-    console.log(`- nextRun: ${target.state.nextRunAtMs ? new Date(target.state.nextRunAtMs).toISOString() : "-"}`);
-    console.log(`- lastRun: ${target.state.lastRunAtMs ? new Date(target.state.lastRunAtMs).toISOString() : "-"}`);
-    console.log(`- lastStatus: ${target.state.lastStatus ?? "-"}`);
-    if (target.state.manualRunRequestedAtMs !== undefined) {
-      console.log(`- manualRunQueuedAt: ${new Date(target.state.manualRunRequestedAtMs).toISOString()}`);
-    }
-    if (target.state.lastError) {
-      console.log(`- lastError: ${target.state.lastError}`);
-    }
+    printMarkdown([
+      "## Cron Job Status",
+      ...buildJobMarkdown(target, 3),
+      "",
+      `- cron config: ${formatCode(context.cronConfigPath)}`,
+    ]);
     return;
   }
 
@@ -253,9 +300,14 @@ export async function runCronRunCommand(options: {
       manualRunRequestedAtMs: current.state.manualRunRequestedAtMs ?? now,
     },
   }));
-  console.log(`Queued one manual run for cron job ${options.jobId}.`);
-  console.log("It will execute once without changing the job's enabled state or next scheduled run.");
-  console.log("Ensure the gateway process is running for execution.");
+  printMarkdown([
+    "## Cron Job Run Queued",
+    `- id: ${formatCode(options.jobId)}`,
+    "- action: queued one immediate execution",
+    "- enabled state: unchanged",
+    "- schedule: unchanged",
+    `- note: Ensure ${formatCode("dobby start")} is running so the queued execution can be consumed.`,
+  ]);
 }
 
 export async function runCronUpdateCommand(options: {
@@ -348,7 +400,10 @@ export async function runCronUpdateCommand(options: {
     return nextJob;
   });
 
-  console.log(`Updated cron job ${options.jobId}`);
+  printMarkdown([
+    "## Cron Job Updated",
+    `- id: ${formatCode(options.jobId)}`,
+  ]);
 }
 
 export async function runCronRemoveCommand(options: {
@@ -362,7 +417,10 @@ export async function runCronRemoveCommand(options: {
   if (!removed) {
     throw new Error(`Cron job '${options.jobId}' does not exist`);
   }
-  console.log(`Removed cron job ${options.jobId}`);
+  printMarkdown([
+    "## Cron Job Removed",
+    `- id: ${formatCode(options.jobId)}`,
+  ]);
 }
 
 export async function runCronPauseCommand(options: {
@@ -378,7 +436,11 @@ export async function runCronPauseCommand(options: {
     enabled: false,
     updatedAtMs: now,
   }));
-  console.log(`Paused cron job ${options.jobId}`);
+  printMarkdown([
+    "## Cron Job Paused",
+    `- id: ${formatCode(options.jobId)}`,
+    "- state: paused",
+  ]);
 }
 
 export async function runCronResumeCommand(options: {
@@ -407,5 +469,9 @@ export async function runCronResumeCommand(options: {
       state: nextState,
     };
   });
-  console.log(`Resumed cron job ${options.jobId}`);
+  printMarkdown([
+    "## Cron Job Resumed",
+    `- id: ${formatCode(options.jobId)}`,
+    "- state: enabled",
+  ]);
 }

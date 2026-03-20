@@ -30,7 +30,8 @@
         "type": "provider.pi",
         "model": "REPLACE_WITH_PROVIDER_MODEL_ID",
         "baseUrl": "REPLACE_WITH_PROVIDER_BASE_URL",
-        "apiKey": "REPLACE_WITH_PROVIDER_API_KEY_OR_ENV"
+        "apiKey": "REPLACE_WITH_PROVIDER_API_KEY_OR_ENV",
+        "agentDir": "~/.dobby"
       }
     }
   },

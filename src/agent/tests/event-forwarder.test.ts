@@ -278,3 +278,32 @@ test("EventForwarder renders visible tool side-messages as plain text for Feishu
     },
   ]);
 });
+
+test("EventForwarder swallows editable final fallback send failures", async () => {
+  const forwarder = new EventForwarder(
+    {
+      id: "discord.main",
+      platform: "discord",
+      name: "discord",
+      capabilities: {
+        updateStrategy: "edit",
+        progressUpdateStrategy: "edit",
+        supportedSources: ["channel"],
+        supportsThread: true,
+        supportsTyping: false,
+        supportsFileUpload: false,
+        maxTextLength: 8_000,
+      },
+      async start() {},
+      async send() {
+        throw new Error("connector unavailable");
+      },
+      async stop() {},
+    },
+    createInbound("discord"),
+    null,
+    createLogger(),
+  );
+
+  await assert.doesNotReject(forwarder.finalize());
+});

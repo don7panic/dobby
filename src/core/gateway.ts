@@ -86,6 +86,7 @@ function conversationKey(message: InboundEnvelope): string {
 export class Gateway {
   private readonly connectorsById = new Map<string, ConnectorPlugin>();
   private started = false;
+  private stopping = false;
 
   constructor(private readonly options: GatewayOptions) {
     for (const connector of options.connectors) {
@@ -96,6 +97,7 @@ export class Gateway {
   async start(): Promise<void> {
     if (this.started) return;
 
+    this.stopping = false;
     await this.options.dedupStore.load();
     this.options.dedupStore.startAutoFlush();
 
@@ -136,15 +138,39 @@ export class Gateway {
   async stop(): Promise<void> {
     if (!this.started) return;
 
+    this.stopping = true;
+    let firstError: unknown;
+
+    try {
+      await this.options.runtimeRegistry.closeAll();
+    } catch (error) {
+      firstError = error;
+      this.options.logger.warn({ err: error }, "Failed to close active runtimes during shutdown");
+    }
+
     for (const connector of this.options.connectors) {
-      await connector.stop();
+      try {
+        await connector.stop();
+      } catch (error) {
+        firstError ??= error;
+        this.options.logger.warn({ err: error, connectorId: connector.id }, "Failed to stop connector during shutdown");
+      }
     }
 
     this.options.dedupStore.stopAutoFlush();
-    await this.options.dedupStore.flush();
-    await this.options.runtimeRegistry.closeAll();
+    try {
+      await this.options.dedupStore.flush();
+    } catch (error) {
+      firstError ??= error;
+      this.options.logger.warn({ err: error }, "Failed to flush dedup store during shutdown");
+    }
 
     this.started = false;
+    this.stopping = false;
+
+    if (firstError) {
+      throw firstError;
+    }
   }
 
   listConnectorStatuses(): ConnectorStatusItem[] {
@@ -154,6 +180,10 @@ export class Gateway {
   }
 
   async handleScheduled(request: ScheduledExecutionRequest): Promise<void> {
+    if (this.stopping) {
+      throw new Error("Gateway is stopping");
+    }
+
     const connector = this.connectorsById.get(request.connectorId);
     if (!connector) {
       throw new Error(`No connector found for scheduled run '${request.runId}' (${request.connectorId})`);
@@ -237,6 +267,17 @@ export class Gateway {
   }
 
   private async handleInbound(message: InboundEnvelope): Promise<void> {
+    if (this.stopping) {
+      this.options.logger.debug(
+        {
+          connectorId: message.connectorId,
+          messageId: message.messageId,
+        },
+        "Ignoring inbound message while gateway is stopping",
+      );
+      return;
+    }
+
     await this.handleMessage(message, {
       origin: "connector",
       useDedup: true,
@@ -473,27 +514,39 @@ export class Gateway {
       this.options.logger.error({ err: error, routeId: route.routeId }, "Failed to process inbound message");
       const rootMessageId = forwarder.primaryMessageId();
       const canEditExisting = connector.capabilities.updateStrategy === "edit" && rootMessageId !== null;
-      await connector.send(
-        canEditExisting
-          ? {
-            ...this.outboundBaseFromInbound(message),
-            mode: "update",
-            targetMessageId: rootMessageId,
-            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          }
-          : {
-            ...this.outboundBaseFromInbound(message),
-            mode: "create",
-            ...(
-              rootMessageId
-                ? { replyToMessageId: rootMessageId }
-                : options.includeReplyTo
-                ? { replyToMessageId: message.messageId }
-                : {}
-            ),
-            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+      try {
+        await connector.send(
+          canEditExisting
+            ? {
+              ...this.outboundBaseFromInbound(message),
+              mode: "update",
+              targetMessageId: rootMessageId,
+              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            }
+            : {
+              ...this.outboundBaseFromInbound(message),
+              mode: "create",
+              ...(
+                rootMessageId
+                  ? { replyToMessageId: rootMessageId }
+                  : options.includeReplyTo
+                  ? { replyToMessageId: message.messageId }
+                  : {}
+              ),
+              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+        );
+      } catch (sendError) {
+        this.options.logger.warn(
+          {
+            err: sendError,
+            connectorId: message.connectorId,
+            chatId: message.chatId,
+            rootMessageId,
           },
-      );
+          "Failed to send error reply",
+        );
+      }
     } finally {
       unsubscribe?.();
       typingController.stop();
@@ -620,6 +673,17 @@ export class Gateway {
   }
 
   private async handleControl(event: StopControlEvent): Promise<void> {
+    if (this.stopping) {
+      this.options.logger.debug(
+        {
+          connectorId: event.connectorId,
+          chatId: event.chatId,
+        },
+        "Ignoring control event while gateway is stopping",
+      );
+      return;
+    }
+
     const convKey = `${event.connectorId}:${event.platform}:${event.accountId}:${event.chatId}:${event.threadId ?? "root"}`;
     const connector = this.connectorsById.get(event.connectorId);
     const cancelled = await this.options.runtimeRegistry.cancel(convKey);
