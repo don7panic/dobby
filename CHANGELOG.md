@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/don7panic/dobby/compare/dobby-v0.4.0...dobby-v0.4.1) (2026-03-20)
+
+
+### Bug Fixes
+
+* **gateway:** improve error handling and shutdown reliability across gateway, connector, and cron modules ([b882993](https://github.com/don7panic/dobby/commit/b882993423cbf7891639fe6dec7f7676b08abf09))
+
 ## [0.4.0](https://github.com/don7panic/dobby/compare/dobby-v0.3.1...dobby-v0.4.0) (2026-03-17)
 
 
